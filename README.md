@@ -7,6 +7,7 @@ extension for 3DSlicer implementing material mapping from CT
 - website: https://www.slicer.org
 - forum: https://discourse.slicer.org
 - video about Slicer from Kitware: https://www.kitware.com/how-to-leverage-3d-slicer-for-medical-imaging-research-product-development/
+- [slicer script editor](https://github.com/SlicerMorph/SlicerScriptEditor/tree/main)
 
 ## Basic Training (learn what Slicer can do)
 - [Training website](https://training.slicer.org/)
