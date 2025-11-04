@@ -31,6 +31,7 @@ This Python package maps material properties from a given CT scan to a given vol
 - [tips on how to implement BoneMat in Slicer](https://discourse.slicer.org/t/best-way-to-map-material-properties-from-ct-scan-to-element/42181/6)
 - [more tips](https://discourse.slicer.org/t/material-mapping-for-bone-from-ct-scan/32837)
 - [more tips](https://discourse.slicer.org/t/quantitative-analysis-bone-mineral-density/1219)
+- [how to show the modulus values in the GUI](https://discourse.slicer.org/t/how-to-display-voxel-intensities/12900)
 
 ## BoneMat (to use for verification)
 - website: [LINK](https://ior-bic.github.io/software/bonemat/index.html)
