@@ -25,11 +25,11 @@ from slicer import (
 )
 
 #
-# MyFirstModule
+# BoneMat
 #
 
 
-class MyFirstModule(ScriptedLoadableModule):
+class BoneMat(ScriptedLoadableModule):
     """Uses ScriptedLoadableModule base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
@@ -108,12 +108,12 @@ def registerSampleData():
 
 
 #
-# MyFirstModuleParameterNode
+# BoneMatParameterNode
 #
 
 
 @parameterNodeWrapper
-class MyFirstModuleParameterNode:
+class BoneMatParameterNode:
     """
     The parameters needed by module.
 
@@ -137,11 +137,11 @@ class MyFirstModuleParameterNode:
     modulusExponent: float
 
 #
-# MyFirstModuleWidget
+# BoneMatWidget
 #
 
 
-class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
+class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
@@ -160,7 +160,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Load widget from .ui file (created by Qt Designer).
         # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath("UI/MyFirstModule.ui"))
+        uiWidget = slicer.util.loadUI(self.resourcePath("UI/BoneMat.ui"))
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
 
@@ -171,7 +171,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
-        self.logic = MyFirstModuleLogic()
+        self.logic = BoneMatLogic()
 
         # Connections
 
@@ -227,7 +227,7 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         #     if firstVolumeNode:
         #         self._parameterNode.inputVolume = firstVolumeNode
 
-    def setParameterNode(self, inputParameterNode: Optional[MyFirstModuleParameterNode]) -> None:
+    def setParameterNode(self, inputParameterNode: Optional[BoneMatParameterNode]) -> None:
         """
         Set and observe parameter node.
         Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
@@ -288,11 +288,11 @@ class MyFirstModuleWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
 
 #
-# MyFirstModuleLogic
+# BoneMatLogic
 #
 
 
-class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
+class BoneMatLogic(ScriptedLoadableModuleLogic):
     """This class should implement all the actual
     computation done by your module.  The interface
     should be such that other python code can import
@@ -307,7 +307,7 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
         ScriptedLoadableModuleLogic.__init__(self)
 
     def getParameterNode(self):
-        return MyFirstModuleParameterNode(super().getParameterNode())
+        return BoneMatParameterNode(super().getParameterNode())
     
     def getModArray(self, huVals):
         paraNode = self.getParameterNode()
@@ -488,11 +488,11 @@ class MyFirstModuleLogic(ScriptedLoadableModuleLogic):
 
 
 #
-# MyFirstModuleTest
+# BoneMatTest
 #
 
 
-class MyFirstModuleTest(ScriptedLoadableModuleTest):
+class BoneMatTest(ScriptedLoadableModuleTest):
     """
     This is the test case for your scripted module.
     Uses ScriptedLoadableModuleTest base class, available at:
@@ -539,7 +539,7 @@ class MyFirstModuleTest(ScriptedLoadableModuleTest):
 
         # Test the module logic
 
-        logic = MyFirstModuleLogic()
+        logic = BoneMatLogic()
 
         # Test algorithm with non-inverted threshold
         logic.process(inputVolume, outputVolume, threshold, True)
