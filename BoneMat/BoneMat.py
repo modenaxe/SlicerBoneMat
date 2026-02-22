@@ -1,8 +1,6 @@
-import logging
 import os
-import random
 import math
-from typing import Annotated, Optional
+from typing import Optional
 
 import vtk
 import numpy as np
@@ -128,6 +126,7 @@ class BoneMatParameterNode:
     inputVolMesh: vtkMRMLModelNode
     outputVolMesh: vtkMRMLModelNode
 
+    valuesPreset: str
     ctDensitySlope: float
     ctDensityIntercept: float
     ashDensityOffset: float
