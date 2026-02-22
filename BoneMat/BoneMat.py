@@ -4,6 +4,7 @@ from typing import Optional
 
 import vtk
 import numpy as np
+import json
 
 from __main__ import qt
 
@@ -178,12 +179,19 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
 
+        # Combo Boxes
+        self.ui.presetSelector.connect("currentIndexChanged(int)", self.onPresetSelection)
+
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
         self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadVTKButton)
+        self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
+        self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+
+        self.setBoneDensityPresetValues()
 
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
@@ -250,6 +258,94 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         else:
             self.ui.applyButton.toolTip = _("Select input CT, input mesh and output mesh")
             self.ui.applyButton.enabled = False
+
+    def setBoneDensityPresetValues(self) -> None:
+        settings = qt.QSettings()
+        jsonPresets = settings.value('BoneMat/BoneDensityPresets')
+        presets = None
+        try:
+            if jsonPresets is None:
+                raise Exception()
+            presets = json.loads(jsonPresets)
+        except:
+            # no presets initialised, or object wasn't valid json
+            # write a 'None' preset with 0s as the 7 values
+            presets = {
+                'None': {
+                    'ctDensitySlope': 0,
+                    'ctDensityIntercept': 0,
+                    'ashDensityOffset': 0,
+                    'ashDensityScale': 0,
+                    'apparentDensityDivisor': 0,
+                    'modulusScale': 0,
+                    'modulusExponent': 0
+                }
+            }
+            settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
+
+        for name, values in presets.items():
+            self.ui.presetSelector.addItem(name, values)
+
+        index = self.ui.presetSelector.findText('None')
+        self.ui.presetSelector.setCurrentIndex(index)
+
+    def onPresetSelection(self) -> None:
+        values = self.ui.presetSelector.currentData
+
+        self._parameterNode.ctDensitySlope = values['ctDensitySlope']
+        self._parameterNode.ctDensityIntercept = values['ctDensityIntercept']
+        self._parameterNode.ashDensityOffset = values['ashDensityOffset']
+        self._parameterNode.ashDensityScale = values['ashDensityScale']
+        self._parameterNode.apparentDensityDivisor = values['apparentDensityDivisor']
+        self._parameterNode.modulusScale = values['modulusScale']
+        self._parameterNode.modulusExponent = values['modulusExponent']
+
+    def onSavePresetButton(self) -> None:
+        name = qt.QInputDialog().getText(None, 'Save', 'Save preset as: (will override an existing preset with the same name)')
+        if name is None or name == '':
+            return
+        if name == 'None':
+            message = qt.QMessageBox()
+            message.setText('"None" is a reserved preset name, choose another name')
+            message.exec()
+            return
+        
+        newPresetValues = {
+            'ctDensitySlope': self._parameterNode.ctDensitySlope,
+            'ctDensityIntercept': self._parameterNode.ctDensityIntercept,
+            'ashDensityOffset': self._parameterNode.ashDensityOffset,
+            'ashDensityScale': self._parameterNode.ashDensityScale,
+            'apparentDensityDivisor': self._parameterNode.apparentDensityDivisor,
+            'modulusScale': self._parameterNode.modulusScale,
+            'modulusExponent': self._parameterNode.modulusExponent
+        }
+        
+        settings = qt.QSettings()
+        presets = json.loads(settings.value('BoneMat/BoneDensityPresets'))
+        presets[name] = newPresetValues
+        settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
+
+        self.ui.presetSelector.addItem(name, newPresetValues)
+        index = self.ui.presetSelector.findText(name)
+        self.ui.presetSelector.setCurrentIndex(index)
+    
+    def onDeletePresetButton(self) -> None:
+        presetName = self.ui.presetSelector.currentText
+        if presetName == 'None':
+            message = qt.QMessageBox()
+            message.setText('Cannot delete "None" preset')
+            message.exec()
+            return
+        
+        settings = qt.QSettings()
+        presets = json.loads(settings.value('BoneMat/BoneDensityPresets'))
+        presets.pop(presetName)
+        settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
+
+        currIndex = self.ui.presetSelector.findText(presetName)
+        self.ui.presetSelector.removeItem(currIndex)
+        noneIndex = self.ui.presetSelector.findText('None')
+        self.ui.presetSelector.setCurrentIndex(noneIndex)
 
     def onApplyButton(self) -> None:
         """Run processing when user clicks "Apply" button."""
