@@ -188,6 +188,12 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
         self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
 
+        # Checkboxes
+        self.ui.phantomCalibrationCheckBox.connect("clicked(bool)", self.onPhantomCheckBox)
+
+        # Phantom calibration table
+        self.ui.phantomCalibrationTableWidget.connect("cellChanged(int,int)", self.onPhantomCellChange)
+
         # Adjusting the UI of the phantom calibration table
         table = self.ui.phantomCalibrationTableWidget
         
@@ -198,6 +204,9 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             height += table.rowHeight(row)
         height += table.frameWidth * 2
         table.setFixedHeight(height)
+
+        # Phantom calibration is initially inactive
+        self.ui.phantomCalibrationTableWidget.enabled = False
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -392,6 +401,35 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         except Exception as e:
             slicer.util.errorDisplay(f"Failed to save mesh: {e}")
 
+    def onPhantomCheckBox(self, checked) -> None:
+        if checked:
+            self.ui.phantomCalibrationTableWidget.enabled = True
+            self.ui.ctDensitySlopeSpinBox.enabled = False
+            self.ui.ctDensityInterceptSpinBox.enabled = False
+        else:
+            self.ui.phantomCalibrationTableWidget.enabled = False
+            self.ui.ctDensitySlopeSpinBox.enabled = True
+            self.ui.ctDensityInterceptSpinBox.enabled = True
+
+    def onPhantomCellChange(self, row, col) -> None:
+        table = self.ui.phantomCalibrationTableWidget
+
+        try:
+            float(table.item(row, col).text())
+        except ValueError:
+            table.item(row, col).setText('')
+            return
+        
+        cellItems = [table.item(0, 0), table.item(0, 1), table.item(1, 0), table.item(1, 1)]
+        if len([x for x in cellItems if x is not None and x.text() != '']) < 4:
+            return
+        
+        nums = [float(x.text()) for x in cellItems]
+        slope = (nums[1] - nums[3]) / (nums[0] - nums[2])
+        intercept = nums[1] - slope * nums[0]
+
+        self.ui.ctDensitySlopeSpinBox.value = slope / 1000
+        self.ui.ctDensityInterceptSpinBox.value = intercept / 1000
 
 #
 # BoneMatLogic
