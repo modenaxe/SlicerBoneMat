@@ -188,6 +188,17 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
         self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
 
+        # Adjusting the UI of the phantom calibration table
+        table = self.ui.phantomCalibrationTableWidget
+        
+        table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+
+        height = table.horizontalHeader().height
+        for row in range(table.rowCount):
+            height += table.rowHeight(row)
+        height += table.frameWidth * 2
+        table.setFixedHeight(height)
+
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
 
