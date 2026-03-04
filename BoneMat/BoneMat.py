@@ -36,6 +36,10 @@ def ensureLocalPackage(importName, installPath=None):
         importlib.invalidate_caches()
         return importlib.import_module(importName)
     
+ensureLocalPackage('meshio')
+
+import meshio
+    
 def configurePyBonematImports(module_file):
     project_root = os.path.abspath(os.path.join(os.path.dirname(module_file), ".."))
     bonemat_repo_root = os.path.join(project_root, "py_bonemat_abaqus")
@@ -159,6 +163,7 @@ class BoneMatParameterNode:
     outputVolMesh: vtkMRMLModelNode
 
     valuesPreset: str
+    downloadFormat: str
     ctDensitySlope: float
     ctDensityIntercept: float
     ashDensityOffset: float
@@ -238,6 +243,13 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Phantom calibration is initially inactive
         self.ui.phantomCalibrationTableWidget.enabled = False
+
+        # Set up download formats
+        self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
+        self.ui.downloadFormatSelector.addItem('FEBio (.feb)', '.feb')
+        self.ui.downloadFormatSelector.addItem('Abaqus (.inp)', '.inp')
+        self.ui.downloadFormatSelector.addItem('Ansys (.msh)', '.msh')
+        self.ui.downloadFormatSelector.setCurrentIndex(0)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -337,7 +349,9 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         for name, values in presets.items():
             self.ui.presetSelector.addItem(name, values)
 
-        index = self.ui.presetSelector.findText('None')
+        index = self.ui.presetSelector.findText('Femur')
+        if index == -1:
+            index = self.ui.presetSelector.findText('None')
         self.ui.presetSelector.setCurrentIndex(index)
 
     def onPresetSelection(self) -> None:
@@ -410,11 +424,19 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             slicer.util.errorDisplay('No output model available to export')
             return
         
+        format = self.ui.downloadFormatSelector.currentText
+        downloadExt = self.ui.downloadFormatSelector.currentData
+
+        if downloadExt == '.feb':
+            message = qt.QMessageBox()
+            message.setText('FEBio downloads coming soon!')
+            message.exec()
+            return
+        
         filePath = qt.QFileDialog.getSaveFileName(
             slicer.util.mainWindow(),
-            "Save mesh as VTK",
-            slicer.app.defaultScenePath,
-            "VTK files (*.vtk)"
+            "Save mesh as " + format,
+            slicer.app.defaultScenePath
         )
 
         if not filePath:
@@ -422,11 +444,24 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         try:
             root, ext = os.path.splitext(filePath)
-            if ext.lower() != ".vtk":
-                filePath = root + ".vtk"
-            ok = slicer.util.saveNode(outputModel, filePath)
-            if not ok:
-                raise RuntimeError(f"Failed to save model to {filePath}")
+            if ext.lower() != downloadExt:
+                filePath = root + downloadExt
+
+            with tempfile.TemporaryDirectory(prefix='slicer_tmp_') as tmpdir:
+                if format == 'VTK':
+                    vtkPath = filePath
+                else:
+                    vtkPath = os.path.join(tmpdir, 'ugrid.vtk')
+
+                ugridWriter = vtk.vtkUnstructuredGridWriter()
+                ugridWriter.SetFileName(vtkPath)
+                ugridWriter.SetInputData(outputModel.GetUnstructuredGrid())
+                ugridWriter.SetFileTypeToASCII()
+                ugridWriter.Write()
+                
+                if format != 'VTK':
+                    mesh = meshio.read(vtkPath)
+                    mesh.write(filePath)
             
             slicer.util.infoDisplay(f"Mesh saved to: {filePath}")
         except Exception as e:
@@ -649,10 +684,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             slicer.util.errorDisplay('Input mesh must be volumetric, not a surface')
             return
         
-        ensureLocalPackage('meshio')
         configurePyBonematImports(__file__)
 
-        import meshio
         from py_bonemat_abaqus.run import run as pyBonematAbaqusRun
 
         with tempfile.TemporaryDirectory(prefix='slicer_tmp_') as tmpdir:
