@@ -1,12 +1,16 @@
 import os
-import math
+import sys
+import re
 from typing import Optional
+from __main__ import qt
 
 import vtk
+from vtk.util import numpy_support
 import numpy as np
 import json
-
-from __main__ import qt
+import tempfile
+import importlib
+from pathlib import Path
 
 import slicer
 from slicer.i18n import tr as _
@@ -17,11 +21,43 @@ from slicer.parameterNodeWrapper import (
     parameterNodeWrapper,
     WithinRange,
 )
-
 from slicer import (
     vtkMRMLScalarVolumeNode,
     vtkMRMLModelNode
 )
+
+def ensureLocalPackage(importName, installPath=None):
+    try:
+        return importlib.import_module(importName)
+    except ModuleNotFoundError:
+        if installPath:
+            slicer.util.pip_install(installPath)
+        else:
+            slicer.util.pip_install(f"\"{importName}\"")
+        importlib.invalidate_caches()
+        return importlib.import_module(importName)
+    
+ensureLocalPackage('meshio')
+
+import meshio
+    
+def configurePyBonematImports(module_file):
+    project_root = os.path.abspath(os.path.join(os.path.dirname(module_file), ".."))
+    bonemat_repo_root = os.path.join(project_root, "py_bonemat_abaqus")
+
+    if bonemat_repo_root in sys.path:
+        sys.path.remove(bonemat_repo_root)
+    sys.path.insert(0, bonemat_repo_root)
+
+    if project_root in sys.path:
+        sys.path.remove(project_root)
+        sys.path.append(project_root)
+
+    if "py_bonemat_abaqus" in sys.modules:
+        del sys.modules["py_bonemat_abaqus"]
+
+    importlib.invalidate_caches()
+    
 
 #
 # BoneMat
@@ -128,6 +164,7 @@ class BoneMatParameterNode:
     outputVolMesh: vtkMRMLModelNode
 
     valuesPreset: str
+    downloadFormat: str
     ctDensitySlope: float
     ctDensityIntercept: float
     ashDensityOffset: float
@@ -207,6 +244,19 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Phantom calibration is initially inactive
         self.ui.phantomCalibrationTableWidget.enabled = False
+
+        # Setup download formats
+        self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
+        self.ui.downloadFormatSelector.addItem('FEBio (.feb)', '.feb')
+        self.ui.downloadFormatSelector.addItem('Abaqus (.inp)', '.inp')
+        self.ui.downloadFormatSelector.addItem('Ansys (.msh)', '.msh')
+        self.ui.downloadFormatSelector.setCurrentIndex(0)
+
+        # Setup algorithm choices
+        self.ui.algoSelector.addItem('HU averaging (Bonemat v1)', 'None')
+        self.ui.algoSelector.addItem('HU integration (Bonemat v2)', 'HU')
+        self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
+        self.ui.algoSelector.setCurrentIndex(1)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -306,7 +356,9 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         for name, values in presets.items():
             self.ui.presetSelector.addItem(name, values)
 
-        index = self.ui.presetSelector.findText('None')
+        index = self.ui.presetSelector.findText('Femur')
+        if index == -1:
+            index = self.ui.presetSelector.findText('None')
         self.ui.presetSelector.setCurrentIndex(index)
 
     def onPresetSelection(self) -> None:
@@ -371,7 +423,12 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """Run processing when user clicks "Apply" button."""
         with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
             # Compute output
-            self.logic.process(self._parameterNode.inputCT, self._parameterNode.inputVolMesh, self._parameterNode.outputVolMesh)
+            self.logic.process(
+                self._parameterNode.inputCT,
+                self._parameterNode.inputVolMesh,
+                self._parameterNode.outputVolMesh,
+                self.ui.algoSelector.currentData
+            )
 
     def onDownloadVTKButton(self) -> None:
         outputModel = self._parameterNode.outputVolMesh
@@ -379,11 +436,19 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             slicer.util.errorDisplay('No output model available to export')
             return
         
+        format = self.ui.downloadFormatSelector.currentText
+        downloadExt = self.ui.downloadFormatSelector.currentData
+
+        if downloadExt == '.feb':
+            message = qt.QMessageBox()
+            message.setText('FEBio downloads coming soon!')
+            message.exec()
+            return
+        
         filePath = qt.QFileDialog.getSaveFileName(
             slicer.util.mainWindow(),
-            "Save mesh as VTK",
-            slicer.app.defaultScenePath,
-            "VTK files (*.vtk)"
+            "Save mesh as " + format,
+            slicer.app.defaultScenePath
         )
 
         if not filePath:
@@ -391,11 +456,24 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         try:
             root, ext = os.path.splitext(filePath)
-            if ext.lower() != ".vtk":
-                filePath = root + ".vtk"
-            ok = slicer.util.saveNode(outputModel, filePath)
-            if not ok:
-                raise RuntimeError(f"Failed to save model to {filePath}")
+            if ext.lower() != downloadExt:
+                filePath = root + downloadExt
+
+            with tempfile.TemporaryDirectory(prefix='slicer_tmp_') as tmpdir:
+                if format == 'VTK':
+                    vtkPath = filePath
+                else:
+                    vtkPath = os.path.join(tmpdir, 'ugrid.vtk')
+
+                ugridWriter = vtk.vtkUnstructuredGridWriter()
+                ugridWriter.SetFileName(vtkPath)
+                ugridWriter.SetInputData(outputModel.GetUnstructuredGrid())
+                ugridWriter.SetFileTypeToASCII()
+                ugridWriter.Write()
+                
+                if format != 'VTK':
+                    mesh = meshio.read(vtkPath)
+                    mesh.write(filePath)
             
             slicer.util.infoDisplay(f"Mesh saved to: {filePath}")
         except Exception as e:
@@ -453,137 +531,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
     def getParameterNode(self):
         return BoneMatParameterNode(super().getParameterNode())
     
-    def getModArray(self, huVals):
-        paraNode = self.getParameterNode()
-        
-        ctDensity = paraNode.ctDensitySlope * huVals + paraNode.ctDensityIntercept
-        ashDensity = (ctDensity + paraNode.ashDensityOffset) / paraNode.ashDensityScale
-        appDensity = ashDensity / paraNode.apparentDensityDivisor
-        modVals = paraNode.modulusScale * (appDensity ** paraNode.modulusExponent)
-        return modVals
-    
-    def computeYoungsModulus(self, CT, ugrid):
-        locator = vtk.vtkStaticCellLocator()
-        locator.SetDataSet(ugrid)
-        locator.BuildLocator()
-
-        imageData = CT.GetImageData()
-        iMin, iMax, jMin, jMax, kMin, kMax = imageData.GetExtent()
-
-        ijkToRas = vtk.vtkMatrix4x4()
-        CT.GetIJKToRASMatrix(ijkToRas)
-
-        numCells = ugrid.GetNumberOfCells()
-        sumE = np.zeros(numCells, dtype=float)
-        countE = np.zeros(numCells, dtype=int)
-
-        ctArray = slicer.util.arrayFromVolume(CT).astype(np.float32)
-        modArray = self.getModArray(ctArray)
-
-        pcoords = [0.0, 0.0, 0.0]
-        weights = [0.0] * ugrid.GetMaxCellSize()
-
-        # loop through all the voxels, find the cell that contains each voxel,
-        # convert from HU to Young's modulus for each voxel and add it to the
-        # sum of contained voxel moduli for each cell
-        genericCell = vtk.vtkGenericCell()
-        for k in range(kMin, kMax + 1):
-            for j in range(jMin, jMax + 1):
-                for i in range(iMin, iMax + 1):
-                    ijk = [i, j, k, 1.0]
-                    ras = [0.0, 0.0, 0.0, 0.0]
-                    ijkToRas.MultiplyPoint(ijk, ras)
-                    x, y, z = ras[0], ras[1], ras[2]
-
-                    cellId = locator.FindCell([x, y, z], 1e-6, genericCell, pcoords, weights)
-                    if cellId < 0:
-                        continue
-
-                    sumE[cellId] += modArray[k, j, i]
-                    countE[cellId] += 1
-
-        rasToIjk = vtk.vtkMatrix4x4()
-        CT.GetRASToIJKMatrix(rasToIjk)
-
-        # for the cells which contain no voxels, we instead use the 8 voxel centroids
-        # that surround the cell
-        for cellId in range(numCells):
-            if countE[cellId] > 0:
-                continue
-
-            cell = ugrid.GetCell(cellId)
-            bounds = [0] * 6
-            cell.GetBounds(bounds)
-
-            centroidRAS = (
-                0.5 * (bounds[0] + bounds[1]),
-                0.5 * (bounds[2] + bounds[3]),
-                0.5 * (bounds[4] + bounds[5])
-            )
-            ijk = [0.0, 0.0, 0.0, 0.0]
-            ras = [centroidRAS[0], centroidRAS[1], centroidRAS[2], 1.0]
-
-            rasToIjk.MultiplyPoint(ras, ijk)
-            i, j, k = ijk[0], ijk[1], ijk[2]
-
-            nz, ny, nx = ctArray.shape  # [k, j, i]
-
-            def clamp(v, lo, hi):
-                return max(lo, min(hi, v))
-
-            i0 = clamp(math.floor(i), 0, nx - 1)
-            i1 = clamp(math.ceil(i),  0, nx - 1)
-            j0 = clamp(math.floor(j), 0, ny - 1)
-            j1 = clamp(math.ceil(j),  0, ny - 1)
-            k0 = clamp(math.floor(k), 0, nz - 1)
-            k1 = clamp(math.ceil(k),  0, nz - 1)
-
-            mod1 = modArray[k0, j0, i0]
-            mod2 = modArray[k0, j0, i1]
-            mod3 = modArray[k0, j1, i0]
-            mod4 = modArray[k0, j1, i1]
-            mod5 = modArray[k1, j0, i0]
-            mod6 = modArray[k1, j0, i1]
-            mod7 = modArray[k1, j1, i0]
-            mod8 = modArray[k1, j1, i1]
-            modVals = [mod1, mod2, mod3, mod4, mod5, mod6, mod7, mod8]
-
-            sumE[cellId] += sum(modVals)
-            countE[cellId] += 8
-
-        avgE = np.zeros(numCells, dtype=float)
-        avgE = sumE / countE
-        return avgE
-    
-    def assignMaterialProperties(self, CT, ugrid):
-        numCells = ugrid.GetNumberOfCells()
-        
-        moduli = vtk.vtkDoubleArray()
-        moduli.SetName('YoungsModulus')
-        moduli.SetNumberOfComponents(1)
-        moduli.SetNumberOfTuples(numCells)
-
-        print('about to compute modulus')
-        modulusValues = self.computeYoungsModulus(CT, ugrid)
-        # modulusValues = np.full(numCells, 5)
-        # paraNode = self.getParameterNode()
-        # print(paraNode.ctDensitySlope)
-        # print(paraNode.ctDensityIntercept)
-        # print(paraNode.ashDensityOffset)
-        # print(paraNode.ashDensityScale)
-        # print(paraNode.apparentDensityDivisor)
-        # print(paraNode.modulusScale)
-        # print(paraNode.modulusExponent)
-        print('computed moduli')
-        for cellId in range(numCells):
-            moduli.SetValue(cellId, modulusValues[cellId])
-
-        cellData = ugrid.GetCellData()
-        if cellData.GetAbstractArray('YoungsModulus') is not None:
-            cellData.RemoveArray('YoungsModulus')
-        
-        cellData.AddArray(moduli)
-        cellData.SetScalars(moduli)
 
     def displayOutputMesh(self, mesh):
         displayNode = mesh.GetDisplayNode()
@@ -610,25 +557,299 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         mesh.SetDisplayVisibility(True)
 
-    def process(self, inputCT, inputMesh, outputMesh):
+    def adjustAbaqusInput(self, in_path, out_path = None) -> str:
+        """
+        Fixes meshio ABAQUS output to match py_bonemat_abaqus expected format
+        """
+
+        in_path = str(in_path)
+        out_path = str(out_path) if out_path else in_path
+
+        lines = Path(in_path).read_text(encoding="utf-8", errors="replace").splitlines(True)
+
+        out_lines = []
+        inserted_part = False
+
+        heading_re = re.compile(r"^(\s*)\*HEADING\b")
+        node_re    = re.compile(r"^(\s*)\*NODE\b")
+        elem_re    = re.compile(r"^(\s*)\*ELEMENT\s*,\s*TYPE\s*=", re.IGNORECASE)
+
+        # py_bonemat_abaqus is strict about capitalisation, so we need multiple fixes
+        for line in lines:
+            # Replace *HEADING -> *Heading
+            line = heading_re.sub(r"\1*Heading", line)
+
+            # Insert *Part,name=model on the line before the first *NODE line
+            if (not inserted_part) and node_re.match(line):
+                indent = node_re.match(line).group(1)
+                out_lines.append(f"{indent}*Part,name=model\n")
+                inserted_part = True
+
+            # Replace *NODE -> *Node
+            line = node_re.sub(r"\1*Node", line)
+
+            # Replace *ELEMENT, TYPE= -> *Element,type=
+            line = elem_re.sub(r"\1*Element,type=", line)
+
+            out_lines.append(line)
+
+        # Add *End Part
+        if out_lines and not out_lines[-1].endswith("\n"):
+            out_lines[-1] += "\n"
+        out_lines.append("*End Part\n")
+
+        Path(out_path).write_text("".join(out_lines), encoding="utf-8")
+        return out_path
+    
+    def reorderedScalars(self, img, flipX, flipY, flipZ):
+        nx, ny, nz = img.GetDimensions()
+        scalars = img.GetPointData().GetScalars()
+
+        arr = numpy_support.vtk_to_numpy(scalars)
+
+        # VTK point ordering: i fastest, then j, then k
+        vol = arr.reshape((nz, ny, nx))
+
+        if flipX:
+            vol = vol[:, :, ::-1]
+        if flipY:
+            vol = vol[:, ::-1, :]
+        if flipZ:
+            vol = vol[::-1, :, :]
+
+        arr2 = np.ascontiguousarray(vol.reshape(-1))
+
+        vtk_arr = numpy_support.numpy_to_vtk(
+            num_array=arr2,
+            deep=True,
+            array_type=scalars.GetDataType()
+        )
+        vtk_arr.SetName(scalars.GetName())
+
+        return vtk_arr
+    
+    def writeVolumeAsRectilinearGrid(self, volNode, outPath):
+        """
+        Writes a Slicer vtkMRMLScalarVolumeNode as a legacy VTK RECTILINEAR_GRID ASCII file
+        with explicit X_COORDINATES / Y_COORDINATES / Z_COORDINATES and POINT_DATA scalars,
+        as required by py_bonemat_abaqus.
+        Assumes the volume axes are not obliquely rotated.
+        """
+        img = volNode.GetImageData()
+        if img is None:
+            raise ValueError("Volume node has no image data")
+
+        nx, ny, nz = img.GetDimensions()
+
+        ijkToRas = vtk.vtkMatrix4x4()
+        volNode.GetIJKToRASMatrix(ijkToRas)
+
+        def ras_of(i, j, k):
+            v = [i, j, k, 1.0]
+            out = [0.0, 0.0, 0.0, 1.0]
+            ijkToRas.MultiplyPoint(v, out)
+            return out[0], out[1], out[2]
+
+        # Build coordinate arrays in ascending order
+        xs = np.array([ras_of(i, 0, 0)[0] for i in range(nx)], dtype=np.float64)
+        ys = np.array([ras_of(0, j, 0)[1] for j in range(ny)], dtype=np.float64)
+        zs = np.array([ras_of(0, 0, k)[2] for k in range(nz)], dtype=np.float64)
+        
+        flipX = False
+        flipY = False
+        flipZ = False
+        if xs[0] > xs[-1]:
+            xs = xs[::-1]
+            flipX = True
+        if ys[0] > ys[-1]:
+            ys = ys[::-1]
+            flipY = True
+        if zs[0] > zs[-1]:
+            zs = zs[::-1]
+            flipZ = True
+
+        rg = vtk.vtkRectilinearGrid()
+        rg.SetDimensions(nx, ny, nz)
+
+        xArr = vtk.vtkDoubleArray()
+        xArr.SetName("X_COORDINATES")
+        xArr.SetNumberOfTuples(nx)
+        for i, v in enumerate(xs):
+            xArr.SetValue(i, float(v))
+
+        yArr = vtk.vtkDoubleArray()
+        yArr.SetName("Y_COORDINATES")
+        yArr.SetNumberOfTuples(ny)
+        for j, v in enumerate(ys):
+            yArr.SetValue(j, float(v))
+
+        zArr = vtk.vtkDoubleArray()
+        zArr.SetName("Z_COORDINATES")
+        zArr.SetNumberOfTuples(nz)
+        for k, v in enumerate(zs):
+            zArr.SetValue(k, float(v))
+
+        rg.SetXCoordinates(xArr)
+        rg.SetYCoordinates(yArr)
+        rg.SetZCoordinates(zArr)
+
+        # Copy scalars from image data to rectilinear grid point data
+        scalars = img.GetPointData().GetScalars()
+        if scalars is None:
+            raise ValueError("CT image data has no point scalars")
+        if scalars.GetNumberOfTuples() != nx * ny * nz:
+            raise ValueError("Scalar tuple count does not match volume dimensions")
+
+        newScalars = self.reorderedScalars(img, flipX, flipY, flipZ)
+
+        rg.GetPointData().SetScalars(newScalars)
+
+        # Write legacy rectilinear grid
+        w = vtk.vtkRectilinearGridWriter()
+        w.SetFileName(outPath)
+        w.SetInputData(rg)
+        w.SetFileTypeToASCII()
+        w.Write()
+
+        # Add cell data field to file to satisfy py_bonemat_abaqus requirements
+        path = Path(outPath)
+        lines = path.read_text(encoding="utf-8").splitlines(True)
+        nCells = (nx - 1) * (ny - 1) * (nz - 1)
+        # Find POINT_DATA line and insert CELL_DATA before it
+        for i, line in enumerate(lines):
+            if line.strip().startswith("POINT_DATA"):
+                lines.insert(i, f"CELL_DATA {nCells}\n")
+                break
+
+        path.write_text("".join(lines), encoding="utf-8")
+        
+
+    def process(self, inputCT, inputMesh, outputMesh, algorithm):
         """
         Assign material properties to output volumetric mesh from input CT data
         """
-
         if not inputMesh.GetUnstructuredGrid():
             slicer.util.errorDisplay('Input mesh must be volumetric, not a surface')
             return
         
-        gridCopy = vtk.vtkUnstructuredGrid()
-        gridCopy.DeepCopy(inputMesh.GetUnstructuredGrid())
-        outputMesh.SetAndObserveMesh(gridCopy)
+        configurePyBonematImports(__file__)
 
-        self.assignMaterialProperties(inputCT, outputMesh.GetUnstructuredGrid())
+        from py_bonemat_abaqus.run import run as pyBonematAbaqusRun
+
+        with tempfile.TemporaryDirectory(prefix='slicer_tmp_') as tmpdir:
+            ctPath = os.path.join(tmpdir, 'ct.vtk')
+            paramsPath = os.path.join(tmpdir, 'params.txt')
+            meshPath = os.path.join(tmpdir, 'mesh.vtk')
+            abaqusMeshPath = os.path.join(tmpdir, 'abaqus_mesh.inp')
+            mappedAbaqusMeshPath = os.path.join(tmpdir, 'abaqus_meshMAT.inp')
+            mappedMeshPath = os.path.join(tmpdir, 'mapped_mesh.vtk')
+
+            ugridWriter = vtk.vtkUnstructuredGridWriter()
+            ugridWriter.SetFileName(meshPath)
+            ugridWriter.SetInputData(inputMesh.GetUnstructuredGrid())
+            ugridWriter.SetFileTypeToASCII()
+            ugridWriter.Write()
+
+            preAbaqusMesh = meshio.read(meshPath)
+            preAbaqusMesh.write(abaqusMeshPath)
+
+            self.adjustAbaqusInput(abaqusMeshPath)
+
+            self.writeVolumeAsRectilinearGrid(inputCT, ctPath)
+
+            paraNode = self.getParameterNode()
+            with open(paramsPath, 'w') as params:
+                params.writelines([
+                    'integration = ' + algorithm + '\n',
+                    'gapValue = 1\n',
+                    'groupingDensity = max\n',
+                    'intSteps = 4\n',
+                    'rhoQCTa = ' + str(paraNode.ctDensityIntercept) + '\n',
+                    'rhoQCTb = ' + str(paraNode.ctDensitySlope) + '\n',
+                    'calibrationCorrect = True\n',
+                    'numCTparam = single\n',
+                    'rhoAsha1 = ' + str(paraNode.ashDensityOffset / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor)) + '\n',
+                    'rhoAshb1 =' + str(1 / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor)) + '\n',
+                    'numEparam = single\n',
+                    'Ea1 = 0\n',
+                    'Eb1 = ' + str(paraNode.modulusScale) + '\n',
+                    'Ec1 = ' + str(paraNode.modulusExponent) + '\n',
+                    'minVal = 0\n', # TODO: make this customisable
+                    'poisson = 0.35'
+                ])
+
+            pyBonematAbaqusRun(paramsPath, ctPath, abaqusMeshPath)
+
+            mappedAbaqusMesh = meshio.read(mappedAbaqusMeshPath)
+            mappedAbaqusMesh.write(mappedMeshPath)
+
+            # read lines to manually assign modulus values
+            with open(mappedAbaqusMeshPath, 'r') as f:
+                lines = f.readlines()
+
+            ugridReader = vtk.vtkUnstructuredGridReader()
+            ugridReader.SetFileName(mappedMeshPath)
+            ugridReader.Update()
+            ugrid = ugridReader.GetOutput()
+
+        numCells = ugrid.GetNumberOfCells()
+        moduli = vtk.vtkDoubleArray()
+        moduli.SetName('YoungsModulus')
+        moduli.SetNumberOfComponents(1)
+        moduli.SetNumberOfTuples(numCells)
+
+        modLookup = []
+        i = 0
+        while i < len(lines):
+            if not lines[i].startswith('*Material'):
+                i += 1
+                continue
+
+            modLine = lines[i+2]
+            mod = float(modLine.strip().split(',')[0])
+            if np.isnan(mod):
+                mod = 15000
+            modLookup.append(mod)
+            i += 3
+
+        modulusValues = [0] * numCells
+        i = 0
+        while i < len(lines):
+            if not lines[i].startswith('*Elset'):
+                i += 1
+                continue
+
+            j = i + 1
+            while not lines[j].startswith('*'):
+                j += 1
+            
+            elementLines = lines[i+1:j]
+            elemIds = []
+            for line in elementLines:
+                elemIds.extend(int(x)-1 for x in line.replace("\n", ",").split(",") if x.strip())
+
+            lookup = int(lines[i].strip().split('_')[-1]) - 1
+            mod = modLookup[lookup]
+            for id in elemIds:
+                modulusValues[id] = mod
+
+            i = j
+
+        for cellId in range(numCells):
+            moduli.SetValue(cellId, modulusValues[cellId])
+
+        cellData = ugrid.GetCellData()
+        if cellData.GetAbstractArray('YoungsModulus') is not None:
+            cellData.RemoveArray('YoungsModulus')
+        
+        cellData.AddArray(moduli)
+        cellData.SetScalars(moduli)
+
+        outputMesh.SetAndObserveMesh(ugrid)
 
         self.displayOutputMesh(outputMesh)
 
         print('done')
-            
 
 
 #
