@@ -732,33 +732,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             slicer.util.errorDisplay('Input mesh must be volumetric, not a surface')
             return
         
-        # ctPath = 'Users/maxwellhogan/Documents/BonematTesting/ct.vtk'
-        # meshPath = 'Users/maxwellhogan/Documents/BonematTesting/mesh.vtk'
-
-        # inputMesh.HardenTransform()
-
-        # ugridWriter = vtk.vtkUnstructuredGridWriter()
-        # ugridWriter.SetFileName(meshPath)
-        # ugridWriter.SetInputData(inputMesh.GetUnstructuredGrid())
-        # ugridWriter.SetFileTypeToASCII()
-        # ugridWriter.Write()
-
-        # reader = vtk.vtkUnstructuredGridReader()
-        # reader.SetFileName(meshPath)
-        # reader.Update()
-
-        # ugrid = reader.GetOutput()
-
-        # print(inputMesh.GetUnstructuredGrid().GetBounds())
-        # print(ugrid.GetBounds())
-
-
-        # # self.writeVolumeAsRectilinearGrid(inputCT, ctPath)
-
-        # print('done')
-
-        # return
-        
         configurePyBonematImports(__file__)
 
         from py_bonemat_abaqus.run import run as pyBonematAbaqusRun
@@ -818,8 +791,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             ugridReader.SetFileName(mappedMeshPath)
             ugridReader.Update()
             ugrid = ugridReader.GetOutput()
-
-        # return
 
         numCells = ugrid.GetNumberOfCells()
         moduli = vtk.vtkDoubleArray()
