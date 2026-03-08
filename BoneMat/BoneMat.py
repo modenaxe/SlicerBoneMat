@@ -5,6 +5,7 @@ from typing import Optional
 from __main__ import qt
 
 import vtk
+from vtk.util import numpy_support
 import numpy as np
 import json
 import tempfile
@@ -244,12 +245,18 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Phantom calibration is initially inactive
         self.ui.phantomCalibrationTableWidget.enabled = False
 
-        # Set up download formats
+        # Setup download formats
         self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
         self.ui.downloadFormatSelector.addItem('FEBio (.feb)', '.feb')
         self.ui.downloadFormatSelector.addItem('Abaqus (.inp)', '.inp')
         self.ui.downloadFormatSelector.addItem('Ansys (.msh)', '.msh')
         self.ui.downloadFormatSelector.setCurrentIndex(0)
+
+        # Setup algorithm choices
+        self.ui.algoSelector.addItem('HU averaging (Bonemat v1)', 'None')
+        self.ui.algoSelector.addItem('HU integration (Bonemat v2)', 'HU')
+        self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
+        self.ui.algoSelector.setCurrentIndex(1)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -416,7 +423,12 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """Run processing when user clicks "Apply" button."""
         with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
             # Compute output
-            self.logic.process(self._parameterNode.inputCT, self._parameterNode.inputVolMesh, self._parameterNode.outputVolMesh)
+            self.logic.process(
+                self._parameterNode.inputCT,
+                self._parameterNode.inputVolMesh,
+                self._parameterNode.outputVolMesh,
+                self.ui.algoSelector.currentData
+            )
 
     def onDownloadVTKButton(self) -> None:
         outputModel = self._parameterNode.outputVolMesh
@@ -589,6 +601,33 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         Path(out_path).write_text("".join(out_lines), encoding="utf-8")
         return out_path
     
+    def reorderedScalars(self, img, flipX, flipY, flipZ):
+        nx, ny, nz = img.GetDimensions()
+        scalars = img.GetPointData().GetScalars()
+
+        arr = numpy_support.vtk_to_numpy(scalars)
+
+        # VTK point ordering: i fastest, then j, then k
+        vol = arr.reshape((nz, ny, nx))
+
+        if flipX:
+            vol = vol[:, :, ::-1]
+        if flipY:
+            vol = vol[:, ::-1, :]
+        if flipZ:
+            vol = vol[::-1, :, :]
+
+        arr2 = np.ascontiguousarray(vol.reshape(-1))
+
+        vtk_arr = numpy_support.numpy_to_vtk(
+            num_array=arr2,
+            deep=True,
+            array_type=scalars.GetDataType()
+        )
+        vtk_arr.SetName(scalars.GetName())
+
+        return vtk_arr
+    
     def writeVolumeAsRectilinearGrid(self, volNode, outPath):
         """
         Writes a Slicer vtkMRMLScalarVolumeNode as a legacy VTK RECTILINEAR_GRID ASCII file
@@ -615,12 +654,19 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         xs = np.array([ras_of(i, 0, 0)[0] for i in range(nx)], dtype=np.float64)
         ys = np.array([ras_of(0, j, 0)[1] for j in range(ny)], dtype=np.float64)
         zs = np.array([ras_of(0, 0, k)[2] for k in range(nz)], dtype=np.float64)
+        
+        flipX = False
+        flipY = False
+        flipZ = False
         if xs[0] > xs[-1]:
             xs = xs[::-1]
+            flipX = True
         if ys[0] > ys[-1]:
             ys = ys[::-1]
+            flipY = True
         if zs[0] > zs[-1]:
             zs = zs[::-1]
+            flipZ = True
 
         rg = vtk.vtkRectilinearGrid()
         rg.SetDimensions(nx, ny, nz)
@@ -654,7 +700,9 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         if scalars.GetNumberOfTuples() != nx * ny * nz:
             raise ValueError("Scalar tuple count does not match volume dimensions")
 
-        rg.GetPointData().SetScalars(scalars)
+        newScalars = self.reorderedScalars(img, flipX, flipY, flipZ)
+
+        rg.GetPointData().SetScalars(newScalars)
 
         # Write legacy rectilinear grid
         w = vtk.vtkRectilinearGridWriter()
@@ -676,13 +724,40 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         path.write_text("".join(lines), encoding="utf-8")
         
 
-    def process(self, inputCT, inputMesh, outputMesh):
+    def process(self, inputCT, inputMesh, outputMesh, algorithm):
         """
         Assign material properties to output volumetric mesh from input CT data
         """
         if not inputMesh.GetUnstructuredGrid():
             slicer.util.errorDisplay('Input mesh must be volumetric, not a surface')
             return
+        
+        # ctPath = 'Users/maxwellhogan/Documents/BonematTesting/ct.vtk'
+        # meshPath = 'Users/maxwellhogan/Documents/BonematTesting/mesh.vtk'
+
+        # inputMesh.HardenTransform()
+
+        # ugridWriter = vtk.vtkUnstructuredGridWriter()
+        # ugridWriter.SetFileName(meshPath)
+        # ugridWriter.SetInputData(inputMesh.GetUnstructuredGrid())
+        # ugridWriter.SetFileTypeToASCII()
+        # ugridWriter.Write()
+
+        # reader = vtk.vtkUnstructuredGridReader()
+        # reader.SetFileName(meshPath)
+        # reader.Update()
+
+        # ugrid = reader.GetOutput()
+
+        # print(inputMesh.GetUnstructuredGrid().GetBounds())
+        # print(ugrid.GetBounds())
+
+
+        # # self.writeVolumeAsRectilinearGrid(inputCT, ctPath)
+
+        # print('done')
+
+        # return
         
         configurePyBonematImports(__file__)
 
@@ -712,7 +787,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             paraNode = self.getParameterNode()
             with open(paramsPath, 'w') as params:
                 params.writelines([
-                    'integration = None\n', # TODO: make this customisable
+                    'integration = ' + algorithm + '\n',
                     'gapValue = 1\n',
                     'groupingDensity = max\n',
                     'intSteps = 4\n',
@@ -743,6 +818,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             ugridReader.SetFileName(mappedMeshPath)
             ugridReader.Update()
             ugrid = ugridReader.GetOutput()
+
+        # return
 
         numCells = ugrid.GetNumberOfCells()
         moduli = vtk.vtkDoubleArray()
