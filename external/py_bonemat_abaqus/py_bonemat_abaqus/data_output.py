@@ -31,8 +31,7 @@ def output_abq_inp(parts, fle, poisson):
         _create_abq_inp(parts, fle, poisson)
 
 def _check_fle_exists(fle):
-    files = os.listdir('.')
-    if fle in files:
+    if os.path.exists(fle):
         return 1
     else:
         return 0

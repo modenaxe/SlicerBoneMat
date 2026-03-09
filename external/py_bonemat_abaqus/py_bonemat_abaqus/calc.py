@@ -10,6 +10,7 @@ __all__ = ['calc_mat_props']
 #-------------------------------------------------------------------------------
 # Import modules
 #-------------------------------------------------------------------------------
+import numpy as np
 from numpy import mean, arange, digitize, array
 from numpy import round as rnd
 from copy import deepcopy
@@ -229,15 +230,21 @@ def _identify_voxels_in_tets(part, vtk):
 def _refine_materials(parts, param):
     """ Group the materials into bins separated by the gapValue parameter """
 
-    moduli = _get_all_modulus_values(parts)
+    # moduli = _get_all_modulus_values(parts)
 
-    # limit the moduli values for each part
+    # # limit the moduli values for each part
+    # for p in range(len(parts)):
+    #     if parts[p].ignore != True:
+    #         parts[p].moduli = _limit_num_materials(parts[p].moduli, 
+    #                                                param['gapValue'], 
+    #                                                param['minVal'], 
+    #                                                param['groupingDensity'])
+
     for p in range(len(parts)):
         if parts[p].ignore != True:
-            parts[p].moduli = _limit_num_materials(parts[p].moduli, 
-                                                   param['gapValue'], 
-                                                   param['minVal'], 
-                                                   param['groupingDensity'])
+            mod = np.asarray(parts[p].moduli, dtype=np.float64)
+            mod = np.floor(mod)
+            parts[p].moduli = mod.tolist()
 
     return parts
     

@@ -43,7 +43,7 @@ import meshio
     
 def configurePyBonematImports(module_file):
     project_root = os.path.abspath(os.path.join(os.path.dirname(module_file), ".."))
-    bonemat_repo_root = os.path.join(project_root, "py_bonemat_abaqus")
+    bonemat_repo_root = os.path.join(project_root, "external/py_bonemat_abaqus")
 
     if bonemat_repo_root in sys.path:
         sys.path.remove(bonemat_repo_root)
