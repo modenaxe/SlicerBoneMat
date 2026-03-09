@@ -430,6 +430,72 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self.ui.algoSelector.currentData
             )
 
+    def exportAbaqusMesh(self, ugrid, filePath) -> None:
+        lines = [
+            '*Heading\n',
+            'Abaqus DataFile Version 6.14\n',
+            'written by Maxwell Hogan\n',
+            '*Node\n'
+        ]
+        
+        pts = ugrid.GetPoints()
+        for ptId in range(ugrid.GetNumberOfPoints()):
+            pt = pts.GetPoint(ptId)
+            lines.append(f'{ptId+1}, {pt[0]:.10e}, {pt[1]:.10e}, {pt[2]:.10e}\n')
+
+        cells = ugrid.GetCells()
+        ptsToCellType = {
+            f'{vtk.VTK_TETRA}': 'C3D4',
+            f'{vtk.VTK_QUADRATIC_TETRA}': 'C3D10',
+            f'{vtk.VTK_WEDGE}': 'C3D6',
+            f'{vtk.VTK_HEXAHEDRON}': 'C3D8'
+        }
+        # assumes mesh is homogenous
+        lines.append(f'*Element,type={ptsToCellType[str(ugrid.GetCell(0).GetCellType())]}\n')
+
+        for cellId in range(ugrid.GetNumberOfCells()):
+            ptIds = ugrid.GetCell(cellId).GetPointIds()
+            elementLine = str(cellId+1)
+            for i in range(ptIds.GetNumberOfIds()):
+                elementLine += f',{ptIds.GetId(i) + 1}'
+            lines.append(elementLine + '\n')
+
+        vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
+        if vtkModuli is None:
+            slicer.util.errorDisplay('Output model has no attached Young\'s Modulus data')
+            return
+        
+        moduli = numpy_support.vtk_to_numpy(vtkModuli)
+        modSet = np.sort(np.unique(moduli))
+        modToCells = {i: [] for i in modSet}
+        for cellId, mod in enumerate(moduli):
+            modToCells[mod] += [cellId + 1]
+
+        indexToMod = {i+1: value for i, value in enumerate(modSet)}.items()
+        for elsetNum, mod in indexToMod:
+            lines.append(f'*Elset, elset=BoneMat_ModBin_{elsetNum}\n')
+            elsetCells = modToCells[mod]
+            i = 0
+            while i < len(elsetCells):
+                lines.append(','.join(list(map(str, elsetCells[i:i+16]))) + '\n')
+                i += 16
+
+        for elsetNum, mod in indexToMod:
+            lines.append(f'*Solid Section, elset=BoneMat_ModBin_{elsetNum}, material=BoneMat_{elsetNum}\n')
+
+        lines.extend(['**\n', '** MATERIALS\n', '**\n'])
+
+        for matNum, mod in indexToMod:
+            lines.extend([
+                f'*Material, name=BoneMat_{matNum}\n',
+                '*Elastic\n',
+                f'{mod}, 0.35\n' # TODO: make this customisable
+            ])
+
+        with open(filePath, 'w') as f:
+            f.writelines(lines)
+
+
     def onDownloadVTKButton(self) -> None:
         outputModel = self._parameterNode.outputVolMesh
         if not outputModel:
@@ -459,21 +525,14 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             if ext.lower() != downloadExt:
                 filePath = root + downloadExt
 
-            with tempfile.TemporaryDirectory(prefix='slicer_tmp_') as tmpdir:
-                if format == 'VTK':
-                    vtkPath = filePath
-                else:
-                    vtkPath = os.path.join(tmpdir, 'ugrid.vtk')
-
+            if downloadExt == '.vtk':
                 ugridWriter = vtk.vtkUnstructuredGridWriter()
-                ugridWriter.SetFileName(vtkPath)
+                ugridWriter.SetFileName(filePath)
                 ugridWriter.SetInputData(outputModel.GetUnstructuredGrid())
                 ugridWriter.SetFileTypeToASCII()
                 ugridWriter.Write()
-                
-                if format != 'VTK':
-                    mesh = meshio.read(vtkPath)
-                    mesh.write(filePath)
+            elif downloadExt == '.inp':
+                self.exportAbaqusMesh(outputModel.GetUnstructuredGrid(), filePath)
             
             slicer.util.infoDisplay(f"Mesh saved to: {filePath}")
         except Exception as e:
