@@ -163,8 +163,6 @@ class BoneMatParameterNode:
     inputVolMesh: vtkMRMLModelNode
     outputVolMesh: vtkMRMLModelNode
 
-    valuesPreset: str
-    downloadFormat: str
     ctDensitySlope: float
     ctDensityIntercept: float
     ashDensityOffset: float
@@ -172,6 +170,12 @@ class BoneMatParameterNode:
     apparentDensityDivisor: float
     modulusScale: float
     modulusExponent: float
+
+    valuesPreset: str
+    minModulus: float
+    poissonValue: float
+    gapValue: int
+    downloadFormat: str
 
 #
 # BoneMatWidget
@@ -297,6 +301,11 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # so that when the scene is saved and reloaded, these settings are restored.
 
         self.setParameterNode(self.logic.getParameterNode())
+
+        # Default values for some options
+        self._parameterNode.minModulus = 0
+        self._parameterNode.poissonValue = 0.35
+        self._parameterNode.gapValue = 10
 
         # TODO: Select default input nodes if nothing is selected yet to save a few clicks for the user
         # if not self._parameterNode.inputVolume:
@@ -443,7 +452,6 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             pt = pts.GetPoint(ptId)
             lines.append(f'{ptId+1}, {pt[0]:.10e}, {pt[1]:.10e}, {pt[2]:.10e}\n')
 
-        cells = ugrid.GetCells()
         ptsToCellType = {
             f'{vtk.VTK_TETRA}': 'C3D4',
             f'{vtk.VTK_QUADRATIC_TETRA}': 'C3D10',
