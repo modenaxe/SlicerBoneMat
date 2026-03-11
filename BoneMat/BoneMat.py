@@ -225,7 +225,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Buttons
         self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
-        self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadVTKButton)
+        self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadButton)
         self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
         self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
 
@@ -475,11 +475,12 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         moduli = numpy_support.vtk_to_numpy(vtkModuli)
         modSet = np.sort(np.unique(moduli))
+        indexToMod = {i+1: value for i, value in enumerate(modSet)}.items()
+
         modToCells = {i: [] for i in modSet}
         for cellId, mod in enumerate(moduli):
             modToCells[mod] += [cellId + 1]
 
-        indexToMod = {i+1: value for i, value in enumerate(modSet)}.items()
         for elsetNum, mod in indexToMod:
             lines.append(f'*Elset, elset=BoneMat_ModBin_{elsetNum}\n')
             elsetCells = modToCells[mod]
@@ -503,8 +504,86 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         with open(filePath, 'w') as f:
             f.writelines(lines)
 
+    def exportFebioMesh(self, ugrid, filePath) -> None:
+        lines = [
+            '<?xml version="1.0" encoding="ISO-8859-1"?>\n',
+            '<febio_spec version="4.0">\n'
+        ]
 
-    def onDownloadVTKButton(self) -> None:
+        # Assume we'll be doing a structural mechanics analysis
+        lines.append('\t<Module type="solid"/>\n')
+
+        # Assume we're doing a static analysis
+        # time_steps and step_size chosen arbitrarily 
+        lines.extend([
+            '\t<Control>\n',
+            '\t\t<analysis>STATIC</analysis>\n',
+            '\t\t<time_steps>50</time_steps>\n',
+            '\t\t<step_size>0.02</step_size>\n',
+            '\t</Control>\n'
+        ])
+
+        vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
+        if vtkModuli is None:
+            slicer.util.errorDisplay('Output model has no attached Young\'s Modulus data')
+            return
+        
+        moduli = numpy_support.vtk_to_numpy(vtkModuli)
+        modSet = np.sort(np.unique(moduli))
+        indexToMod = {i+1: value for i, value in enumerate(modSet)}.items()
+
+        modToCells = {i: [] for i in modSet}
+        for cellId, mod in enumerate(moduli):
+            modToCells[mod] += [cellId]
+        
+        lines.append('\t<Material>\n')
+        for matNum, mod in indexToMod:
+            lines.extend([
+                f'\t\t<material id="{matNum}" name="BoneMat_{matNum}" type="isotropic elastic">\n',
+                f'\t\t\t<E>{mod}</E>\n',
+                f'\t\t\t<v>{self._parameterNode.poissonValue}</v>\n',
+                '\t\t</material>\n'
+            ])
+        lines.append('\t</Material>\n')
+
+        lines.append('\t<Mesh>\n')
+        lines.append('\t\t<Nodes>\n')
+        pts = ugrid.GetPoints()
+        for ptId in range(ugrid.GetNumberOfPoints()):
+            pt = pts.GetPoint(ptId)
+            lines.append(f'\t\t\t<node id="{ptId+1}">{pt[0]:.10e},{pt[1]:.10e},{pt[2]:.10e}</node>\n')
+        lines.append('\t\t</Nodes>\n')
+
+        ptsToCellType = {
+            f'{vtk.VTK_TETRA}': 'tet4',
+            f'{vtk.VTK_QUADRATIC_TETRA}': 'tet10',
+            f'{vtk.VTK_WEDGE}': 'penta6',
+            f'{vtk.VTK_HEXAHEDRON}': 'hex8'
+        }
+        for elementId, mod in indexToMod:
+            # Assumes all elements with same modulus have the same cell type
+            cellIds = modToCells[mod]
+            cellType = ptsToCellType[str(ugrid.GetCell(cellIds[0]).GetCellType())]
+            lines.append(f'\t\t<Elements type="{cellType}" name="BoneMat_Set_{elementId}">\n')
+            for cellId in cellIds:
+                ptIdsList = ugrid.GetCell(cellId).GetPointIds()
+                elementLine = f'\t\t\t<elem id="{cellId+1}">'
+                ptIds = list(map(lambda x: str(ptIdsList.GetId(x) + 1), range(ptIdsList.GetNumberOfIds())))
+                elementLine += ','.join(ptIds) + '</elem>\n'
+                lines.append(elementLine)
+            lines.append('\t\t</Elements>\n')
+        lines.append('\t</Mesh>\n')
+
+        lines.append('\t<MeshDomains>\n')
+        for num, mod in indexToMod:
+            lines.append(f'\t\t<SolidDomain name="BoneMat_Set_{num}" mat="BoneMat_{num}"/>\n')
+        lines.append('\t</MeshDomains>\n')
+
+        lines.append('</febio_spec>\n')
+        with open(filePath, 'w') as f:
+            f.writelines(lines)
+
+    def onDownloadButton(self) -> None:
         outputModel = self._parameterNode.outputVolMesh
         if not outputModel:
             slicer.util.errorDisplay('No output model available to export')
@@ -512,12 +591,6 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         format = self.ui.downloadFormatSelector.currentText
         downloadExt = self.ui.downloadFormatSelector.currentData
-
-        if downloadExt == '.feb':
-            message = qt.QMessageBox()
-            message.setText('FEBio downloads coming soon!')
-            message.exec()
-            return
         
         filePath = qt.QFileDialog.getSaveFileName(
             slicer.util.mainWindow(),
@@ -541,6 +614,8 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 ugridWriter.Write()
             elif downloadExt == '.inp':
                 self.exportAbaqusMesh(outputModel.GetUnstructuredGrid(), filePath)
+            elif downloadExt == '.feb':
+                self.exportFebioMesh(outputModel.GetUnstructuredGrid(), filePath)
             
             slicer.util.infoDisplay(f"Mesh saved to: {filePath}")
         except Exception as e:
