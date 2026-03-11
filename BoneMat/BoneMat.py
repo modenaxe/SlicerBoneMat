@@ -497,7 +497,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             lines.extend([
                 f'*Material, name=BoneMat_{matNum}\n',
                 '*Elastic\n',
-                f'{mod}, 0.35\n' # TODO: make this customisable
+                f'{mod}, {self._parameterNode.poissonValue}\n'
             ])
 
         with open(filePath, 'w') as f:
@@ -828,7 +828,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             with open(paramsPath, 'w') as params:
                 params.writelines([
                     'integration = ' + algorithm + '\n',
-                    'gapValue = 1\n',
+                    'gapValue = ' + str(paraNode.gapValue) + '\n',
                     'groupingDensity = max\n',
                     'intSteps = 4\n',
                     'rhoQCTa = ' + str(paraNode.ctDensityIntercept) + '\n',
@@ -841,8 +841,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
                     'Ea1 = 0\n',
                     'Eb1 = ' + str(paraNode.modulusScale) + '\n',
                     'Ec1 = ' + str(paraNode.modulusExponent) + '\n',
-                    'minVal = 0\n', # TODO: make this customisable
-                    'poisson = 0.35'
+                    'minVal = ' + str(paraNode.minModulus) + '\n',
+                    'poisson = ' + str(paraNode.poissonValue)
                 ])
 
             pyBonematAbaqusRun(paramsPath, ctPath, abaqusMeshPath)

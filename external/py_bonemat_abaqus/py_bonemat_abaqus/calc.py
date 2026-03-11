@@ -230,21 +230,13 @@ def _identify_voxels_in_tets(part, vtk):
 def _refine_materials(parts, param):
     """ Group the materials into bins separated by the gapValue parameter """
 
-    # moduli = _get_all_modulus_values(parts)
-
-    # # limit the moduli values for each part
-    # for p in range(len(parts)):
-    #     if parts[p].ignore != True:
-    #         parts[p].moduli = _limit_num_materials(parts[p].moduli, 
-    #                                                param['gapValue'], 
-    #                                                param['minVal'], 
-    #                                                param['groupingDensity'])
-
+    # limit the moduli values for each part
     for p in range(len(parts)):
         if parts[p].ignore != True:
-            mod = np.asarray(parts[p].moduli, dtype=np.float64)
-            mod = np.floor(mod)
-            parts[p].moduli = mod.tolist()
+            parts[p].moduli = _limit_num_materials(parts[p].moduli, 
+                                                   param['gapValue'], 
+                                                   param['minVal'], 
+                                                   param['groupingDensity'])
 
     return parts
     
@@ -309,5 +301,6 @@ def _limit_num_materials(moduli, gapValue, minVal, groupingDensity):
                     sorted_moduli = sorted_moduli[:b]
                     indices = indices[:b]                        
                         
+        print(new_moduli[:100])
         return new_moduli
         
