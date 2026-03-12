@@ -253,7 +253,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
         self.ui.downloadFormatSelector.addItem('FEBio (.feb)', '.feb')
         self.ui.downloadFormatSelector.addItem('Abaqus (.inp)', '.inp')
-        self.ui.downloadFormatSelector.addItem('Ansys (.msh)', '.msh')
+        self.ui.downloadFormatSelector.addItem('Ansys (.cdb)', '.cdb')
         self.ui.downloadFormatSelector.setCurrentIndex(0)
 
         # Setup algorithm choices
@@ -583,6 +583,55 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         with open(filePath, 'w') as f:
             f.writelines(lines)
 
+    def exportAnsysMesh(self, ugrid, filePath) -> None:
+        lines = ['/PREP7\n\n']
+
+        ptsToCellType = {
+            f'{vtk.VTK_TETRA}': 'SOLID285',
+            f'{vtk.VTK_QUADRATIC_TETRA}': 'SOLID187',
+            f'{vtk.VTK_WEDGE}': 'SOLID185',
+            f'{vtk.VTK_HEXAHEDRON}': 'SOLID185'
+        }
+        # Assumes mesh is homogenous
+        lines.extend([
+            f'ET,1,{ptsToCellType[str(ugrid.GetCell(0).GetCellType())]}\n',
+            'TYPE,1\n\n'
+        ])
+
+        vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
+        if vtkModuli is None:
+            slicer.util.errorDisplay('Output model has no attached Young\'s Modulus data')
+            return
+
+        moduli = numpy_support.vtk_to_numpy(vtkModuli)
+        modSet = np.sort(np.unique(moduli))
+        indexToMod = {i+1: value for i, value in enumerate(modSet)}.items()
+
+        for matNum, mod in indexToMod:
+            lines.extend([
+                f'MP,EX,{matNum},{mod}\n',
+                f'MP,NUXY,{matNum},{self._parameterNode.poissonValue}\n\n'
+            ])
+
+        pts = ugrid.GetPoints()
+        for ptId in range(ugrid.GetNumberOfPoints()):
+            pt = pts.GetPoint(ptId)
+            lines.append(f'N,{ptId+1},{pt[0]:.10e},{pt[1]:.10e},{pt[2]:.10e}\n')
+
+        modToCells = {i: [] for i in modSet}
+        for cellId, mod in enumerate(moduli):
+            modToCells[mod] += [cellId]
+
+        for matNum, mod in indexToMod:
+            lines.append(f'\nMAT,{matNum}\n')
+            for cellId in modToCells[mod]:
+                ptIdsList = ugrid.GetCell(cellId).GetPointIds()
+                ptIds = list(map(lambda x: str(ptIdsList.GetId(x) + 1), range(ptIdsList.GetNumberOfIds())))
+                lines.append('E,' + ','.join(ptIds) + '\n')
+
+        with open(filePath, 'w') as f:
+            f.writelines(lines)
+
     def onDownloadButton(self) -> None:
         outputModel = self._parameterNode.outputVolMesh
         if not outputModel:
@@ -616,6 +665,8 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self.exportAbaqusMesh(outputModel.GetUnstructuredGrid(), filePath)
             elif downloadExt == '.feb':
                 self.exportFebioMesh(outputModel.GetUnstructuredGrid(), filePath)
+            elif downloadExt == '.cdb':
+                self.exportAnsysMesh(outputModel.GetUnstructuredGrid(), filePath)
             
             slicer.util.infoDisplay(f"Mesh saved to: {filePath}")
         except Exception as e:
