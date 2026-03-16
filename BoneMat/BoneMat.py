@@ -260,7 +260,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.algoSelector.addItem('HU averaging (Bonemat v1)', 'None')
         self.ui.algoSelector.addItem('HU integration (Bonemat v2)', 'HU')
         self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
-        self.ui.algoSelector.setCurrentIndex(1)
+        self.ui.algoSelector.setCurrentIndex(2)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -305,7 +305,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Default values for some options
         self._parameterNode.minModulus = 0
         self._parameterNode.poissonValue = 0.35
-        self._parameterNode.gapValue = 10
+        self._parameterNode.gapValue = 200
 
         # TODO: Select default input nodes if nothing is selected yet to save a few clicks for the user
         # if not self._parameterNode.inputVolume:
@@ -794,7 +794,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         Path(out_path).write_text("".join(out_lines), encoding="utf-8")
         return out_path
     
-    def reorderedScalars(self, img, flipX, flipY, flipZ):
+    def reorderedPaddedScalars(self, img, flipX, flipY, flipZ):
         nx, ny, nz = img.GetDimensions()
         scalars = img.GetPointData().GetScalars()
 
@@ -810,7 +810,10 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         if flipZ:
             vol = vol[::-1, :, :]
 
-        arr2 = np.ascontiguousarray(vol.reshape(-1))
+        # add one-voxel buffer of -1000 HU values around CT data
+        paddedVol = np.pad(vol, ((1,1),(1,1),(1,1)), mode='constant', constant_values=-1000)
+
+        arr2 = np.ascontiguousarray(paddedVol.reshape(-1))
 
         vtk_arr = numpy_support.numpy_to_vtk(
             num_array=arr2,
@@ -847,6 +850,14 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         xs = np.array([ras_of(i, 0, 0)[0] for i in range(nx)], dtype=np.float64)
         ys = np.array([ras_of(0, j, 0)[1] for j in range(ny)], dtype=np.float64)
         zs = np.array([ras_of(0, 0, k)[2] for k in range(nz)], dtype=np.float64)
+        # Add extra coordinates at the front and back for padding later
+        # assumes CT data is larger than a single voxel
+        xDiff = xs[1] - xs[0]
+        xs = np.concatenate(([xs[0] - xDiff], xs, [xs[nx - 1] + xDiff]))
+        yDiff = ys[1] - ys[0]
+        ys = np.concatenate(([ys[0] - yDiff], ys, [ys[ny - 1] + yDiff]))
+        zDiff = zs[1] - zs[0]
+        zs = np.concatenate(([zs[0] - zDiff], zs, [zs[nz - 1] + zDiff]))
         
         flipX = False
         flipY = False
@@ -862,23 +873,23 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             flipZ = True
 
         rg = vtk.vtkRectilinearGrid()
-        rg.SetDimensions(nx, ny, nz)
+        rg.SetDimensions(nx + 2, ny + 2, nz + 2) # +2 accounts for padding
 
         xArr = vtk.vtkDoubleArray()
         xArr.SetName("X_COORDINATES")
-        xArr.SetNumberOfTuples(nx)
+        xArr.SetNumberOfTuples(nx + 2)
         for i, v in enumerate(xs):
             xArr.SetValue(i, float(v))
 
         yArr = vtk.vtkDoubleArray()
         yArr.SetName("Y_COORDINATES")
-        yArr.SetNumberOfTuples(ny)
+        yArr.SetNumberOfTuples(ny + 2)
         for j, v in enumerate(ys):
             yArr.SetValue(j, float(v))
 
         zArr = vtk.vtkDoubleArray()
         zArr.SetName("Z_COORDINATES")
-        zArr.SetNumberOfTuples(nz)
+        zArr.SetNumberOfTuples(nz + 2)
         for k, v in enumerate(zs):
             zArr.SetValue(k, float(v))
 
@@ -893,7 +904,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         if scalars.GetNumberOfTuples() != nx * ny * nz:
             raise ValueError("Scalar tuple count does not match volume dimensions")
 
-        newScalars = self.reorderedScalars(img, flipX, flipY, flipZ)
+        newScalars = self.reorderedPaddedScalars(img, flipX, flipY, flipZ)
 
         rg.GetPointData().SetScalars(newScalars)
 
@@ -904,10 +915,13 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         w.SetFileTypeToASCII()
         w.Write()
 
+        w.SetFileName('/Users/maxwellhogan/Desktop/test.vtk')
+        w.Write()
+
         # Add cell data field to file to satisfy py_bonemat_abaqus requirements
         path = Path(outPath)
         lines = path.read_text(encoding="utf-8").splitlines(True)
-        nCells = (nx - 1) * (ny - 1) * (nz - 1)
+        nCells = (nx + 1) * (ny + 1) * (nz + 1) # +1 not -1 to account for padding
         # Find POINT_DATA line and insert CELL_DATA before it
         for i, line in enumerate(lines):
             if line.strip().startswith("POINT_DATA"):
@@ -950,6 +964,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
             self.writeVolumeAsRectilinearGrid(inputCT, ctPath)
 
+            # return
+
             paraNode = self.getParameterNode()
             with open(paramsPath, 'w') as params:
                 params.writelines([
@@ -984,6 +1000,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             ugridReader.SetFileName(mappedMeshPath)
             ugridReader.Update()
             ugrid = ugridReader.GetOutput()
+
+        # return
 
         numCells = ugrid.GetNumberOfCells()
         moduli = vtk.vtkDoubleArray()
