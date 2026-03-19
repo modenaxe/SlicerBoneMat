@@ -175,6 +175,8 @@ class BoneMatParameterNode:
     minModulus: float
     poissonValue: float
     gapValue: int
+    ctPadDepth: int
+    ctPadValue: int
     downloadFormat: str
 
 #
@@ -306,12 +308,8 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._parameterNode.minModulus = 10
         self._parameterNode.poissonValue = 0.35
         self._parameterNode.gapValue = 200
-
-        # TODO: Select default input nodes if nothing is selected yet to save a few clicks for the user
-        # if not self._parameterNode.inputVolume:
-        #     firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLMarkupsFiducialNode")
-        #     if firstVolumeNode:
-        #         self._parameterNode.inputVolume = firstVolumeNode
+        self._parameterNode.ctPadDepth = 1
+        self._parameterNode.ctPadValue = -1000
 
     def setParameterNode(self, inputParameterNode: Optional[BoneMatParameterNode]) -> None:
         """
@@ -512,16 +510,6 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Assume we'll be doing a structural mechanics analysis
         lines.append('\t<Module type="solid"/>\n')
-
-        # # Assume we're doing a static analysis
-        # # time_steps and step_size chosen arbitrarily 
-        # lines.extend([
-        #     '\t<Control>\n',
-        #     '\t\t<analysis>STATIC</analysis>\n',
-        #     '\t\t<time_steps>50</time_steps>\n',
-        #     '\t\t<step_size>0.02</step_size>\n',
-        #     '\t</Control>\n'
-        # ])
 
         vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
         if vtkModuli is None:
@@ -818,8 +806,13 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         if flipZ:
             vol = vol[::-1, :, :]
 
-        # add one-voxel buffer of -1000 HU values around CT data
-        paddedVol = np.pad(vol, ((1,1),(1,1),(1,1)), mode='constant', constant_values=-1000)
+        # add user-specified voxel buffer of HU values around CT data
+        paraNode = self.getParameterNode()
+        if paraNode.ctPadDepth > 0:
+            padShape = ((paraNode.ctPadValue, paraNode.ctPadValue),) * 3
+            paddedVol = np.pad(vol, padShape, mode='constant', constant_values=paraNode.ctPadValue)
+        else:
+            paddedVol = vol
 
         arr2 = np.ascontiguousarray(paddedVol.reshape(-1))
 
