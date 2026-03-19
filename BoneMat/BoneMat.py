@@ -303,7 +303,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.setParameterNode(self.logic.getParameterNode())
 
         # Default values for some options
-        self._parameterNode.minModulus = 0
+        self._parameterNode.minModulus = 10
         self._parameterNode.poissonValue = 0.35
         self._parameterNode.gapValue = 200
 
@@ -513,15 +513,15 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Assume we'll be doing a structural mechanics analysis
         lines.append('\t<Module type="solid"/>\n')
 
-        # Assume we're doing a static analysis
-        # time_steps and step_size chosen arbitrarily 
-        lines.extend([
-            '\t<Control>\n',
-            '\t\t<analysis>STATIC</analysis>\n',
-            '\t\t<time_steps>50</time_steps>\n',
-            '\t\t<step_size>0.02</step_size>\n',
-            '\t</Control>\n'
-        ])
+        # # Assume we're doing a static analysis
+        # # time_steps and step_size chosen arbitrarily 
+        # lines.extend([
+        #     '\t<Control>\n',
+        #     '\t\t<analysis>STATIC</analysis>\n',
+        #     '\t\t<time_steps>50</time_steps>\n',
+        #     '\t\t<step_size>0.02</step_size>\n',
+        #     '\t</Control>\n'
+        # ])
 
         vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
         if vtkModuli is None:
@@ -536,15 +536,14 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         for cellId, mod in enumerate(moduli):
             modToCells[mod] += [cellId]
         
-        lines.append('\t<Material>\n')
-        for matNum, mod in indexToMod:
-            lines.extend([
-                f'\t\t<material id="{matNum}" name="BoneMat_{matNum}" type="isotropic elastic">\n',
-                f'\t\t\t<E>{mod}</E>\n',
-                f'\t\t\t<v>{self._parameterNode.poissonValue}</v>\n',
-                '\t\t</material>\n'
-            ])
-        lines.append('\t</Material>\n')
+        lines.extend([
+            '\t<Material>\n',
+            '\t\t<material id="1" name="youngs_modulus" type="isotropic elastic">\n',
+            '\t\t\t<E type="map">moduli_map</E>\n',
+            f'\t\t\t<v>{self._parameterNode.poissonValue}</v>\n',
+            '\t\t</material>\n'
+            '\t</Material>\n'
+        ])
 
         lines.append('\t<Mesh>\n')
         lines.append('\t\t<Nodes>\n')
@@ -576,8 +575,17 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         lines.append('\t<MeshDomains>\n')
         for num, mod in indexToMod:
-            lines.append(f'\t\t<SolidDomain name="BoneMat_Set_{num}" mat="BoneMat_{num}"/>\n')
+            lines.append(f'\t\t<SolidDomain name="BoneMat_Set_{num}" mat="youngs_modulus"/>\n')
         lines.append('\t</MeshDomains>\n')
+
+        lines.append('\t<MeshData>\n')
+        for elementId, mod in indexToMod:
+            lines.append(f'\t\t<ElementData name="moduli_map" elem_set="BoneMat_Set_{elementId}">\n')
+            numCells = len(modToCells[mod])
+            for i in range(numCells):
+                lines.append(f'\t\t\t<elem lid="{i+1}">{mod}</elem>\n')
+            lines.append(f'\t\t</ElementData>\n')
+        lines.append('\t</MeshData>\n')
 
         lines.append('</febio_spec>\n')
         with open(filePath, 'w') as f:
