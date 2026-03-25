@@ -6,6 +6,7 @@ from __main__ import qt
 
 import vtk
 from vtk.util import numpy_support
+from vtkmodules.vtkFiltersVerdict import vtkMeshQuality
 import numpy as np
 import json
 import tempfile
@@ -163,6 +164,12 @@ class BoneMatParameterNode:
     inputVolMesh: vtkMRMLModelNode
     outputVolMesh: vtkMRMLModelNode
 
+    meshNodes: str
+    meshElements: str
+    meshMinStat: str
+    meshMaxStat: str
+    meshAvgStat: str
+
     ctDensitySlope: float
     ctDensityIntercept: float
     ashDensityOffset: float
@@ -216,40 +223,10 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # in batch mode, without a graphical user interface.
         self.logic = BoneMatLogic()
 
-        # Connections
-
-        # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
-
-        # Combo Boxes
-        self.ui.presetSelector.connect("currentIndexChanged(int)", self.onPresetSelection)
-
-        # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
-        self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadButton)
-        self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
-        self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
-
-        # Checkboxes
-        self.ui.phantomCalibrationCheckBox.connect("clicked(bool)", self.onPhantomCheckBox)
-
-        # Phantom calibration table
-        self.ui.phantomCalibrationTableWidget.connect("cellChanged(int,int)", self.onPhantomCellChange)
-
-        # Adjusting the UI of the phantom calibration table
-        table = self.ui.phantomCalibrationTableWidget
-        
-        table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
-
-        height = table.horizontalHeader().height
-        for row in range(table.rowCount):
-            height += table.rowHeight(row)
-        height += table.frameWidth * 2
-        table.setFixedHeight(height)
-
-        # Phantom calibration is initially inactive
-        self.ui.phantomCalibrationTableWidget.enabled = False
+        # Setup input mesh statistics options
+        self.ui.inputMeshStatSelector.addItem('Element volume', 'vol')
+        self.ui.inputMeshStatSelector.addItem('Maximum element edge length', 'max_edge')
+        self.ui.inputMeshStatSelector.addItem('Minimum element edge length', 'min_edge')
 
         # Setup download formats
         self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
@@ -264,14 +241,71 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
         self.ui.algoSelector.setCurrentIndex(2)
 
+        # Connections
+
+        # These connections ensure that we update parameter node when scene is closed
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+
+        # Combo Boxes
+        self.ui.inputVolMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onInputMeshSelection)
+        self.ui.inputMeshStatSelector.connect("currentIndexChanged(int)", self.onMeshStatSelection)
+        self.ui.presetSelector.connect("currentIndexChanged(int)", self.onPresetSelection)
+
+        # Buttons
+        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadButton)
+        self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
+        self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
+        self.ui.calcMeshStatsButton.connect("clicked(bool)", self.onCalcMeshStatsButton)
+
+        # Checkboxes
+        self.ui.phantomCalibrationCheckBox.connect("clicked(bool)", self.onPhantomCheckBox)
+
+        # Phantom calibration table
+        self.ui.phantomCalibrationTableWidget.connect("cellChanged(int,int)", self.onPhantomCellChange)
+
+        # Adjusting the UI of the phantom calibration table
+        table = self.ui.phantomCalibrationTableWidget
+        table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+
+        height = table.horizontalHeader().height
+        for row in range(table.rowCount):
+            height += table.rowHeight(row)
+        height += table.frameWidth * 2
+        table.setFixedHeight(height)
+
+        # Phantom calibration is initially inactive
+        self.ui.phantomCalibrationTableWidget.enabled = False
+
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+
+        self.ui.inputMeshStatSelector.setCurrentIndex(0)
 
         self.setBoneDensityPresetValues()
 
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
         self.removeObservers()
+
+        # Combo Boxes
+        self.ui.inputVolMeshSelector.disconnect("currentNodeChanged(vtkMRMLNode*)", self.onInputMeshSelection)
+        self.ui.inputMeshStatSelector.disconnect("currentIndexChanged(int)", self.onMeshStatSelection)
+        self.ui.presetSelector.disconnect("currentIndexChanged(int)", self.onPresetSelection)
+
+        # Buttons
+        self.ui.applyButton.disconnect("clicked(bool)", self.onApplyButton)
+        self.ui.downloadVTKButton.disconnect("clicked(bool)", self.onDownloadButton)
+        self.ui.savePresetButton.disconnect("clicked(bool)", self.onSavePresetButton)
+        self.ui.deletePresetButton.disconnect("clicked(bool)", self.onDeletePresetButton)
+        self.ui.calcMeshStatsButton.disconnect("clicked(bool)", self.onCalcMeshStatsButton)
+
+        # Checkboxes
+        self.ui.phantomCalibrationCheckBox.disconnect("clicked(bool)", self.onPhantomCheckBox)
+
+        # Phantom calibration table
+        self.ui.phantomCalibrationTableWidget.disconnect("cellChanged(int,int)", self.onPhantomCellChange)
 
     def enter(self) -> None:
         """Called each time the user opens this module."""
@@ -305,11 +339,18 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.setParameterNode(self.logic.getParameterNode())
 
         # Default values for some options
-        self._parameterNode.minModulus = 10
-        self._parameterNode.poissonValue = 0.35
-        self._parameterNode.gapValue = 200
-        self._parameterNode.ctPadDepth = 1
-        self._parameterNode.ctPadValue = -1000
+        with slicer.util.NodeModify(self._parameterNode):
+            self._parameterNode.meshNodes = '0'
+            self._parameterNode.meshElements = '0'
+            self._parameterNode.meshMinStat = '0'
+            self._parameterNode.meshMaxStat = '0'
+            self._parameterNode.meshAvgStat = '0'
+
+            self._parameterNode.minModulus = 10
+            self._parameterNode.poissonValue = 0.35
+            self._parameterNode.gapValue = 200
+            self._parameterNode.ctPadDepth = 1
+            self._parameterNode.ctPadValue = -1000
 
     def setParameterNode(self, inputParameterNode: Optional[BoneMatParameterNode]) -> None:
         """
@@ -378,6 +419,171 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._parameterNode.apparentDensityDivisor = values['apparentDensityDivisor']
         self._parameterNode.modulusScale = values['modulusScale']
         self._parameterNode.modulusExponent = values['modulusExponent']
+
+    def onInputMeshSelection(self) -> None:
+        with slicer.util.NodeModify(self._parameterNode):
+            self._parameterNode.meshNodes = '0'
+            self._parameterNode.meshElements = '0'
+            self._parameterNode.meshMinStat = '0'
+            self._parameterNode.meshMaxStat = '0'
+            self._parameterNode.meshAvgStat = '0'
+
+        self._meshStats = {}
+        self._meshStats["meshMinVol"] = 0
+        self._meshStats["meshMaxVol"] = 0
+        self._meshStats["meshAvgVol"] = 0
+        self._meshStats["meshMinMinEdge"] = 0
+        self._meshStats["meshMaxMinEdge"] = 0
+        self._meshStats["meshAvgMinEdge"] = 0
+        self._meshStats["meshMinMaxEdge"] = 0
+        self._meshStats["meshMaxMaxEdge"] = 0
+        self._meshStats["meshAvgMaxEdge"] = 0
+
+        self._plots = {}
+        self.ui.inputMeshStatsPlotView.setMinimumHeight(0)
+
+    def onCalcMeshStatsButton(self) -> None:
+        mesh = self._parameterNode.inputVolMesh
+        if mesh is None:
+            return
+        
+        self.ui.calcMeshStatsButton.enabled = False
+        self.ui.calcMeshStatsButton.text = 'Loading...'
+        slicer.app.processEvents()
+        
+        ugrid = mesh.GetUnstructuredGrid()
+        mq = vtkMeshQuality()
+        volume = []
+        minEdge = []
+        maxEdge = []
+
+        for i in range(ugrid.GetNumberOfCells()):
+            cell = ugrid.GetCell(i)
+
+            if cell.GetCellType() in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA]:
+                volume.append(mq.TetVolume(cell))
+            elif cell.GetCellType() in [vtk.VTK_PYRAMID]:
+                volume.append(mq.PyramidVolume(cell))
+            elif cell.GetCellType() in [vtk.VTK_WEDGE]:
+                volume.append(mq.WedgeVolume(cell))
+            elif cell.GetCellType() in [vtk.VTK_HEXAHEDRON, vtk.VTK_QUADRATIC_HEXAHEDRON, vtk.VTK_TRIQUADRATIC_HEXAHEDRON]:
+                volume.append(mq.HexVolume(cell))
+            else:
+                continue
+
+            squareEdgeLens = []
+            for e in range(cell.GetNumberOfEdges()):
+                pts = cell.GetEdge(e).GetPoints()
+                p1 = pts.GetPoint(0)
+                p2 = pts.GetPoint(1)
+                squareEdgeLens.append(
+                    (p1[0] - p2[0]) ** 2 +
+                    (p1[1] - p2[1]) ** 2 +
+                    (p1[2] - p2[2]) ** 2
+                )
+
+            minEdge.append(np.sqrt(np.min(squareEdgeLens)))
+            maxEdge.append(np.sqrt(np.max(squareEdgeLens)))
+
+        self._parameterNode.meshNodes = str(ugrid.GetNumberOfPoints())
+        self._parameterNode.meshElements = str(ugrid.GetNumberOfCells())
+
+        self._meshStats["meshMinVol"] = np.min(volume)
+        self._meshStats["meshMaxVol"] = np.max(volume)
+        self._meshStats["meshAvgVol"] = np.mean(volume)
+
+        self._meshStats["meshMinMinEdge"] = np.min(minEdge)
+        self._meshStats["meshMaxMinEdge"] = np.max(minEdge)
+        self._meshStats["meshAvgMinEdge"] = np.mean(minEdge)
+
+        self._meshStats["meshMinMaxEdge"] = np.min(maxEdge)
+        self._meshStats["meshMaxMaxEdge"] = np.max(maxEdge)
+        self._meshStats["meshAvgMaxEdge"] = np.mean(maxEdge)
+
+        self.ui.calcMeshStatsButton.enabled = True
+        self.ui.calcMeshStatsButton.text = 'Calculate'
+
+        self.createMeshStatsPlots(volume, minEdge, maxEdge)
+
+        self.onMeshStatSelection()
+
+    def createMeshStatsPlots(self, volume, minEdge, maxEdge) -> None:
+        volumeTable = self.createMeshStatTable(volume)
+        minEdgeTable = self.createMeshStatTable(minEdge)
+        maxEdgeTable = self.createMeshStatTable(maxEdge)
+
+        # Get chart from widget
+        chartView = self.ui.inputMeshStatsPlotView
+        chart = chartView.chart()
+        chart.ClearPlots()
+
+        self._plots = {}
+
+        self._plots["volume"] = chart.AddPlot(vtk.vtkChart.BAR)
+        self._plots["volume"].SetInputData(volumeTable, 0, 1)
+
+        self._plots["minEdge"] = chart.AddPlot(vtk.vtkChart.BAR)
+        self._plots["minEdge"].SetInputData(minEdgeTable, 0, 1)
+
+        self._plots["maxEdge"] = chart.AddPlot(vtk.vtkChart.BAR)
+        self._plots["maxEdge"].SetInputData(maxEdgeTable, 0, 1)
+
+        chartView.setMinimumHeight(250)
+
+    def createMeshStatTable(self, values):
+        counts, edges = np.histogram(values, bins=20)
+        centres = 0.5 * (edges[:-1] + edges[1:])
+
+        table = vtk.vtkTable()
+        xArr = vtk.vtkFloatArray()
+        xArr.SetName("Volume")
+        yArr = vtk.vtkIntArray()
+        yArr.SetName("Count")
+
+        for x, y in zip(centres, counts):
+            xArr.InsertNextValue(x)
+            yArr.InsertNextValue(y)
+
+        table.AddColumn(xArr)
+        table.AddColumn(yArr)
+        return table
+
+    def onMeshStatSelection(self) -> None:
+        stat = self.ui.inputMeshStatSelector.currentData
+        if self._parameterNode.inputVolMesh is None or self._plots == {}:
+            return
+
+        self._plots["volume"].SetVisible(stat == 'vol')
+        self._plots["minEdge"].SetVisible(stat == 'min_edge')
+        self._plots["maxEdge"].SetVisible(stat == 'max_edge')
+
+        chartView = self.ui.inputMeshStatsPlotView
+        chart = chartView.chart()
+
+        chart.GetAxis(vtk.vtkAxis.LEFT).SetTitle('Number of Elements')
+        chart.RecalculateBounds()
+
+        chartView.setAxesToChartBounds()
+        chartView.renderWindow().Render()
+
+        if stat == 'vol':
+            chart.GetAxis(vtk.vtkAxis.BOTTOM).SetTitle('Element Volume')
+            with slicer.util.NodeModify(self._parameterNode):
+                self._parameterNode.meshMinStat = str(round(self._meshStats["meshMinVol"], 6))
+                self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxVol"], 6))
+                self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgVol"], 6))
+        elif stat == 'min_edge':
+            chart.GetAxis(vtk.vtkAxis.BOTTOM).SetTitle('Minimum Element Edge Length')
+            with slicer.util.NodeModify(self._parameterNode):
+                self._parameterNode.meshMinStat = str(round(self._meshStats["meshMinMinEdge"], 6))
+                self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxMinEdge"], 6))
+                self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgMinEdge"], 6))
+        elif stat == 'max_edge':
+            chart.GetAxis(vtk.vtkAxis.BOTTOM).SetTitle('Maximum Element Edge Length')
+            with slicer.util.NodeModify(self._parameterNode):
+                self._parameterNode.meshMinStat = str(round(self._meshStats["meshMinMaxEdge"], 6))
+                self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxMaxEdge"], 6))
+                self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgMaxEdge"], 6))
 
     def onSavePresetButton(self) -> None:
         name = qt.QInputDialog().getText(None, 'Save', 'Save preset as: (will override an existing preset with the same name)')
