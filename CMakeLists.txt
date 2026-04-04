@@ -4,9 +4,10 @@ project(SlicerBoneMat)
 
 #-----------------------------------------------------------------------------
 # Extension meta-information
-set(EXTENSION_HOMEPAGE "https://www.slicer.org/wiki/Documentation/Nightly/Extensions/MyFirstExtension")
-set(EXTENSION_CONTRIBUTORS "John Doe (AnyWare Corp.)")
-set(EXTENSION_DESCRIPTION "This is an example of a simple extension")
+set(EXTENSION_HOMEPAGE "https://github.com/modenaxe/SlicerBoneMat.git")
+set(EXTENSION_CATEGORY "Surface Models")
+set(EXTENSION_CONTRIBUTORS "Maxwell Hogan (University of New South Wales), Luca Modenese (University of New South Wales)")
+set(EXTENSION_DESCRIPTION "A 3D Slicer implementation of the BoneMat workflow for generating finite element meshes from CT data with automated material property mapping based on voxel intensities.")
 set(EXTENSION_ICONURL "https://www.example.com/Slicer/Extensions/MyFirstExtension.png")
 set(EXTENSION_SCREENSHOTURLS "https://www.example.com/Slicer/Extensions/MyFirstExtension/Screenshots/1.png")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies

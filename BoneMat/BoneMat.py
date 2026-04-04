@@ -59,7 +59,6 @@ def configurePyBonematImports(module_file):
 
     importlib.invalidate_caches()
     
-
 #
 # BoneMat
 #
@@ -72,81 +71,23 @@ class BoneMat(ScriptedLoadableModule):
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = _("SlicerBoneMat")  # TODO: make this more human readable by adding spaces
-        # TODO: set categories (folders where the module shows up in the module selector)
-        self.parent.categories = [translate("qSlicerAbstractCoreModule", "Examples")]
-        self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-        self.parent.contributors = ["John Doe (AnyWare Corp.)"]  # TODO: replace with "Firstname Lastname (Organization)"
-        # TODO: update with short description of the module and a link to online module documentation
-        # _() function marks text as translatable to other languages
+        self.parent.title = _("SlicerBoneMat")
+        self.parent.categories = ["Surface Models"]
+        self.parent.dependencies = []
+        self.parent.contributors = ["Maxwell Hogan (University of New South Wales)", "Luca Modenese (University of New South Wales)"]
         self.parent.helpText = _("""
-This is an example of scripted loadable module bundled in an extension.
-See more information in <a href="https://github.com/organization/projectname#MyFirstModule">module documentation</a>.
+Generate finite element models from CT data with automated material mapping based on voxel intensities.
+<p>This module is intended to be a 3D Slicer implementation of the <a href="https://ior-bic.github.io/software/bonemat/index.html">original BoneMat software</a>, which was created by the Bioengineering and Computing Laboratory (BIC) of the Rizzoli Orthopaedic Institute (Bologna, Italy). This extension is powered by a Python implementation of BoneMat, <a href="https://github.com/elisepegg/py_bonemat_abaqus/tree/master">'py_bonemat_abaqus'</a>, written by Dr Elise Pegg (Newcastle University) in 2016, created to add ABAQUS mesh support to the original software.</p>
 """)
-        # TODO: replace with organization, grant and thanks
         self.parent.acknowledgementText = _("""
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
+The idea for this module was conceived by Dr Luca Modenese (University of New South Wales) as a modern, open-source implementation of BoneMat which supported more operating systems and I/O formats. The module itself was developed by Maxwell Hogan (University of New South Wales) as part of a Software Engineering Honours Thesis project under Dr Modenese's supervision.
+<p>BoneMat citation: Taddei F, Schileo E, Helgason B, Cristofolini L, Viceconti M. The material mapping strategy influences the accuracy of CT-based finite element models of bones: an evaluation against experimental measurements. Med Eng Phys. 2007 Nov;29(9):973-9</p>
+<p>py_bonemat_abaqus citation: Elise C. Pegg, Harinderjit S. Gill, An open source software tool to assign the material properties of bone for ABAQUS finite element simulations, Journal of Biomechanics, Volume 49, Issue 13, 2016, Pages 3116-3121</p>
 """)
-
-        # Additional initialization step after application startup is complete
-        slicer.app.connect("startupCompleted()", registerSampleData)
-
-
-#
-# Register sample data sets in Sample Data module
-#
-
-
-def registerSampleData():
-    """Add data sets to Sample Data module."""
-    # It is always recommended to provide sample data for users to make it easy to try the module,
-    # but if no sample data is available then this method (and associated startupCompeted signal connection) can be removed.
-
-    import SampleData
-
-    iconsPath = os.path.join(os.path.dirname(__file__), "Resources/Icons")
-
-    # To ensure that the source code repository remains small (can be downloaded and installed quickly)
-    # it is recommended to store data sets that are larger than a few MB in a Github release.
-
-    # MyFirstModule1
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="MyFirstModule",
-        sampleName="MyFirstModule1",
-        # Thumbnail should have size of approximately 260x280 pixels and stored in Resources/Icons folder.
-        # It can be created by Screen Capture module, "Capture all views" option enabled, "Number of images" set to "Single".
-        thumbnailFileName=os.path.join(iconsPath, "MyFirstModule1.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        fileNames="MyFirstModule1.nrrd",
-        # Checksum to ensure file integrity. Can be computed by this command:
-        #  import hashlib; print(hashlib.sha256(open(filename, "rb").read()).hexdigest())
-        checksums="SHA256:998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        # This node name will be used when the data set is loaded
-        nodeNames="MyFirstModule1",
-    )
-
-    # MyFirstModule2
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="MyFirstModule",
-        sampleName="MyFirstModule2",
-        thumbnailFileName=os.path.join(iconsPath, "MyFirstModule2.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        fileNames="MyFirstModule2.nrrd",
-        checksums="SHA256:1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        # This node name will be used when the data set is loaded
-        nodeNames="MyFirstModule2",
-    )
-
 
 #
 # BoneMatParameterNode
 #
-
 
 @parameterNodeWrapper
 class BoneMatParameterNode:
@@ -189,7 +130,6 @@ class BoneMatParameterNode:
 #
 # BoneMatWidget
 #
-
 
 class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -1015,7 +955,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         # add user-specified voxel buffer of HU values around CT data
         paraNode = self.getParameterNode()
         if paraNode.ctPadDepth > 0:
-            padShape = ((paraNode.ctPadValue, paraNode.ctPadValue),) * 3
+            padShape = ((paraNode.ctPadDepth, paraNode.ctPadDepth),) * 3
             paddedVol = np.pad(vol, padShape, mode='constant', constant_values=paraNode.ctPadValue)
         else:
             paddedVol = vol
