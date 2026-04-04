@@ -1,50 +1,46 @@
 # SlicerBoneMat
-extension for 3DSlicer implementing material mapping from CT
 
-# Resources to look at
+This is a 3D Slicer extension for assigning material properties (specifically Young's Modulus) to volumetric meshes using CT voxel intensities.
 
-# 3DSlicer (essential!)
-- website: https://www.slicer.org
-- forum: https://discourse.slicer.org
-- video about Slicer from Kitware: https://www.kitware.com/how-to-leverage-3d-slicer-for-medical-imaging-research-product-development/
-- [slicer script editor](https://github.com/SlicerMorph/SlicerScriptEditor/tree/main)
+It's designed to be a modern, open-source equivalent of the original BoneMat software, with some much-needed improvements to the UI, supported I/O formats and phantom calibration abilities.
 
-## Basic Training (learn what Slicer can do)
-- [Training website](https://training.slicer.org/)
-- [PerkLab Youtube channel](https://www.youtube.com/@PerkLabResearch)
+![Alt text](Screenshot01.png?raw=true "Segment Mesher module user interface")
 
-## Advance training (learn about images and how to program Slicer)
-- PerkLab bootcamp: https://github.com/PerkLab/PerkLabBootcamp
-- Programming tutorial for 3D Slicer: https://github.com/Slicer/SlicerProgrammingTutorial
+## Usage
 
-## Integration: Slicer extensions, Python packages and tips from the developers
+Here is a brief description of how to use the various sections of the module's UI:
+* Input/output models
+  * Select the input CT volume (likely a DICOM series)
+  * Select the input volumetric mesh (can be created from a surface model using the SegmentMesher extension)
+  * Select the output model
+* Input mesh summary
+  * Press the 'Calculate' button to summarise the input volumetric mesh
+  * It calculates statistics such as:
+    * Number of nodes
+    * Number of elements
+    * Element volumes
+    * Maximum element edge length
+    * Minimum element edge length
+  * A grouped distribution of some of these statistics also appears
+* Advanced
+  * This section includes the phantom calibration capability and the HU to Young's Modulus formulas
+  * If you want to use phantom calibration, click the checkbox and enter the 4 values in the table as example conversions
+    * Since phantom calibration derives the HU to CT density formula, enabling it disables the related input fields
+  * After entering the values for the evaluation steps, you can create a new preset to save them for later
+* Options
+  * The options here allow for further optional finetuning
+  * Some further clarification:
+    * The 3 algorithm choices reflect the 3 published versions of BoneMat over the years
+    * Poisson's ratio is used in the output formats, as it is important for the FEA solvers to perform simulations
+    * The gap value is the gap between the bins that the Young's modulus values are grouped into
+* Download options
+  * The extension currently supports 4 output formats, including:
+    * VTK
+    * ABAQUS
+    * ANSYS
+    * FEBio
 
-### SlicerSegmenter
-- [SlicerSegmenMesher](https://github.com/lassoan/SlicerSegmentMesher): can convert segmentations to volumetric meshes. __NOTE__: when you import a 3D bone geometry you can choose if you want to import it as a model (surface geometry) or segmentation!
+## License
 
-### PyBoneMat
-This Python package maps material properties from a given CT scan to a given volumetric mesh.
-- original version (Python 2.7) [repository](https://github.com/elisepegg/py_bonemat_abaqus)
-- updated version (Python 3.x) [repository](https://github.com/modenaxe/py_bonemat_abaqus)
+This project is released under the GNU General Public License v3 (GPLv3). While Slicer typically prefers more permissive licenses, this module incorporates and builds upon py_bonemat_abaqus, which is licensed under GPLv3, and therefore this project adopts the same license to remain compliant.
 
-### Slicer forum tips on integration
-- [tips on how to implement BoneMat in Slicer](https://discourse.slicer.org/t/best-way-to-map-material-properties-from-ct-scan-to-element/42181/6)
-- [more tips](https://discourse.slicer.org/t/material-mapping-for-bone-from-ct-scan/32837)
-- [more tips](https://discourse.slicer.org/t/quantitative-analysis-bone-mineral-density/1219)
-- [how to show the modulus values in the GUI](https://discourse.slicer.org/t/how-to-display-voxel-intensities/12900)
-
-## BoneMat (to use for verification)
-- website: [LINK](https://ior-bic.github.io/software/bonemat/index.html)
-- user manual and test data (for validation): [LINK](https://ior-bic.github.io/software/bonemat/downloads.html)
-
-## MITK-GEM (to use for verification)
-This software is designed for a material mapping workflow
-- MITK-GEM [website](https://araex.github.io/mitk-gem-site)
-- Github repository: [LINK](https://github.com/araex/mitk-gem)
-- files to write outputs for Ansys and Abaqus [LINK](https://github.com/araex/mitk-gem/tree/master/Scripts)
-
-## FEBio Studio (one of the output formats)
-This is a popular open-source finite element platform that runs the FEBio solver. 
-The extension must be able to produce input files for FEBio:
-- binaries for FEBio Studio are available from [here](https://febio.org/)
-- source code is available [here](https://github.com/febiosoftware/FEBioStudio)
