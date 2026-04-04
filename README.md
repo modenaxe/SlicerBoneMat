@@ -28,7 +28,7 @@ Here is a brief description of how to use the various sections of the module's U
     * Since phantom calibration derives the HU to CT density formula, enabling it disables the related input fields
   * After entering the values for the evaluation steps, you can create a new preset to save them for later
 * Options
-  * The options here allow for further optional finetuning
+  * The options here allow for further finetuning
   * Some further clarification:
     * The 3 algorithm choices reflect the 3 published versions of BoneMat over the years
     * Poisson's ratio is used in the output formats, as it is important for the FEA solvers to perform simulations
@@ -42,5 +42,5 @@ Here is a brief description of how to use the various sections of the module's U
 
 ## License
 
-This project is released under the GNU General Public License v3 (GPLv3). While Slicer typically prefers more permissive licenses, this module incorporates and builds upon py_bonemat_abaqus, which is licensed under GPLv3, and therefore this project adopts the same license to remain compliant.
+This project is released under the GNU General Public License v3 (GPLv3). While Slicer typically prefers more permissive licenses, this module incorporates and builds upon <a href="https://github.com/elisepegg/py_bonemat_abaqus">py_bonemat_abaqus</a>, which is licensed under GPLv3, and therefore this project adopts the same license to remain compliant.
 
