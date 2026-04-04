@@ -8,8 +8,8 @@ set(EXTENSION_HOMEPAGE "https://github.com/modenaxe/SlicerBoneMat.git")
 set(EXTENSION_CATEGORY "Surface Models")
 set(EXTENSION_CONTRIBUTORS "Maxwell Hogan (University of New South Wales), Luca Modenese (University of New South Wales)")
 set(EXTENSION_DESCRIPTION "A 3D Slicer implementation of the BoneMat workflow for generating finite element meshes from CT data with automated material property mapping based on voxel intensities.")
-set(EXTENSION_ICONURL "https://www.example.com/Slicer/Extensions/MyFirstExtension.png")
-set(EXTENSION_SCREENSHOTURLS "https://www.example.com/Slicer/Extensions/MyFirstExtension/Screenshots/1.png")
+set(EXTENSION_ICONURL "https://raw.githubusercontent.com/modenaxe/SlicerBoneMat/main/SlicerBoneMat.png")
+set(EXTENSION_SCREENSHOTURLS "https://raw.githubusercontent.com/modenaxe/SlicerBoneMat/main/Screenshot01.png")
 set(EXTENSION_DEPENDS "NA") # Specified as a list or "NA" if no dependencies
 
 #-----------------------------------------------------------------------------

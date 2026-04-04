@@ -71,7 +71,7 @@ class BoneMat(ScriptedLoadableModule):
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = _("SlicerBoneMat")
+        self.parent.title = _("BoneMat")
         self.parent.categories = ["Surface Models"]
         self.parent.dependencies = []
         self.parent.contributors = ["Maxwell Hogan (University of New South Wales)", "Luca Modenese (University of New South Wales)"]
