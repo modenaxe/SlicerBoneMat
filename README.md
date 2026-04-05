@@ -42,5 +42,5 @@ Here is a brief description of how to use the various sections of the module's U
 
 ## License
 
-This project is released under the GNU General Public License v3 (GPLv3). While Slicer typically prefers more permissive licenses, this module incorporates and builds upon <a href="https://github.com/elisepegg/py_bonemat_abaqus">py_bonemat_abaqus</a>, which is licensed under GPLv3, and therefore this project adopts the same license to remain compliant.
+This project is released under the GNU General Public License v3 (GPLv3). While Slicer typically prefers more permissive licenses, this module incorporates and builds upon <a href="https://github.com/elisepegg/py_bonemat_abaqus">py_bonemat_abaqus</a>, developed by Dr Elise Pegg (University of Bath), which is licensed under GPLv3, and therefore this project adopts the same license to remain compliant.
 
