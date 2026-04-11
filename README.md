@@ -19,6 +19,7 @@ Here is a brief description of how to use the various sections of the module's U
     * Number of nodes
     * Number of elements
     * Element volumes
+    * Tetrahedron quality (i.e. the radius-edge ratio)
     * Maximum element edge length
     * Minimum element edge length
   * A grouped distribution of some of these statistics also appears
