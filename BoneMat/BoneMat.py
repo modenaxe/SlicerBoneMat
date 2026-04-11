@@ -1,6 +1,7 @@
 import os
 import sys
 import re
+import math
 from typing import Optional
 from __main__ import qt
 
@@ -165,6 +166,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Setup input mesh statistics options
         self.ui.inputMeshStatSelector.addItem('Element volume', 'vol')
+        self.ui.inputMeshStatSelector.addItem('Tetrahedron quality', 'tet_quality')
         self.ui.inputMeshStatSelector.addItem('Maximum element edge length', 'max_edge')
         self.ui.inputMeshStatSelector.addItem('Minimum element edge length', 'min_edge')
 
@@ -372,6 +374,9 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._meshStats["meshMinVol"] = 0
         self._meshStats["meshMaxVol"] = 0
         self._meshStats["meshAvgVol"] = 0
+        self._meshStats["meshMinTetQual"] = 0
+        self._meshStats["meshMaxTetQual"] = 0
+        self._meshStats["meshAvgTetQual"] = 0
         self._meshStats["meshMinMinEdge"] = 0
         self._meshStats["meshMaxMinEdge"] = 0
         self._meshStats["meshAvgMinEdge"] = 0
@@ -394,6 +399,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         ugrid = mesh.GetUnstructuredGrid()
         mq = vtkMeshQuality()
         volume = []
+        tetQuality = []
         minEdge = []
         maxEdge = []
 
@@ -402,6 +408,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
             if cell.GetCellType() in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA]:
                 volume.append(mq.TetVolume(cell))
+                tetQuality.append(self.computeTetQuality(cell))
             elif cell.GetCellType() in [vtk.VTK_PYRAMID]:
                 volume.append(mq.PyramidVolume(cell))
             elif cell.GetCellType() in [vtk.VTK_WEDGE]:
@@ -432,6 +439,10 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._meshStats["meshMaxVol"] = np.max(volume)
         self._meshStats["meshAvgVol"] = np.mean(volume)
 
+        self._meshStats["meshMinTetQual"] = np.min(tetQuality)
+        self._meshStats["meshMaxTetQual"] = np.max(tetQuality)
+        self._meshStats["meshAvgTetQual"] = np.mean(tetQuality)
+
         self._meshStats["meshMinMinEdge"] = np.min(minEdge)
         self._meshStats["meshMaxMinEdge"] = np.max(minEdge)
         self._meshStats["meshAvgMinEdge"] = np.mean(minEdge)
@@ -443,12 +454,13 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.calcMeshStatsButton.enabled = True
         self.ui.calcMeshStatsButton.text = 'Calculate'
 
-        self.createMeshStatsPlots(volume, minEdge, maxEdge)
+        self.createMeshStatsPlots(volume, tetQuality, minEdge, maxEdge)
 
         self.onMeshStatSelection()
 
-    def createMeshStatsPlots(self, volume, minEdge, maxEdge) -> None:
+    def createMeshStatsPlots(self, volume, tetQuality, minEdge, maxEdge) -> None:
         volumeTable = self.createMeshStatTable(volume)
+        tetQualityTable = self.createMeshStatTable(tetQuality)
         minEdgeTable = self.createMeshStatTable(minEdge)
         maxEdgeTable = self.createMeshStatTable(maxEdge)
 
@@ -461,6 +473,9 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self._plots["volume"] = chart.AddPlot(vtk.vtkChart.BAR)
         self._plots["volume"].SetInputData(volumeTable, 0, 1)
+
+        self._plots["tetQuality"] = chart.AddPlot(vtk.vtkChart.BAR)
+        self._plots["tetQuality"].SetInputData(tetQualityTable, 0, 1)
 
         self._plots["minEdge"] = chart.AddPlot(vtk.vtkChart.BAR)
         self._plots["minEdge"].SetInputData(minEdgeTable, 0, 1)
@@ -494,6 +509,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             return
 
         self._plots["volume"].SetVisible(stat == 'vol')
+        self._plots["tetQuality"].SetVisible(stat == 'tet_quality')
         self._plots["minEdge"].SetVisible(stat == 'min_edge')
         self._plots["maxEdge"].SetVisible(stat == 'max_edge')
 
@@ -512,6 +528,12 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self._parameterNode.meshMinStat = str(round(self._meshStats["meshMinVol"], 6))
                 self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxVol"], 6))
                 self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgVol"], 6))
+        elif stat == 'tet_quality':
+            chart.GetAxis(vtk.vtkAxis.BOTTOM).SetTitle('Tetrahedron Quality')
+            with slicer.util.NodeModify(self._parameterNode):
+                self._parameterNode.meshMinStat = str(round(self._meshStats["meshMinTetQual"], 6))
+                self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxTetQual"], 6))
+                self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgTetQual"], 6))
         elif stat == 'min_edge':
             chart.GetAxis(vtk.vtkAxis.BOTTOM).SetTitle('Minimum Element Edge Length')
             with slicer.util.NodeModify(self._parameterNode):
@@ -524,6 +546,95 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self._parameterNode.meshMinStat = str(round(self._meshStats["meshMinMaxEdge"], 6))
                 self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxMaxEdge"], 6))
                 self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgMaxEdge"], 6))
+
+    # Calculates radius-edge ratio of tets
+    # Transcribes the FEBio Studio source code's C++ implementation
+    def computeTetQuality(self, cell) -> float:
+        points = cell.GetPoints()
+
+        # Read the first 4 nodal coordinates
+        p = [points.GetPoint(i) for i in range(4)]
+
+        # Build matrix A
+        A = [
+            [p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]],
+            [p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]],
+            [p[3][0] - p[0][0], p[3][1] - p[0][1], p[3][2] - p[0][2]],
+        ]
+
+        # Determinant of A
+        detA = (
+            A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+            - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+            + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0])
+        )
+
+        eps = 1e-14
+        if abs(detA) < eps:
+            return math.inf
+
+        inv_det = 1.0 / detA
+
+        # Inverse of A
+        Ainv = [
+            [
+                (A[1][1] * A[2][2] - A[1][2] * A[2][1]) * inv_det,
+                -(A[0][1] * A[2][2] - A[0][2] * A[2][1]) * inv_det,
+                (A[0][1] * A[1][2] - A[0][2] * A[1][1]) * inv_det,
+            ],
+            [
+                -(A[1][0] * A[2][2] - A[1][2] * A[2][0]) * inv_det,
+                (A[0][0] * A[2][2] - A[0][2] * A[2][0]) * inv_det,
+                -(A[0][0] * A[1][2] - A[0][2] * A[1][0]) * inv_det,
+            ],
+            [
+                (A[1][0] * A[2][1] - A[1][1] * A[2][0]) * inv_det,
+                -(A[0][0] * A[2][1] - A[0][1] * A[2][0]) * inv_det,
+                (A[0][0] * A[1][1] - A[0][1] * A[1][0]) * inv_det,
+            ],
+        ]
+
+        def squared_norm(v):
+            return v[0] * v[0] + v[1] * v[1] + v[2] * v[2]
+
+        # Build RHS b
+        b = [
+            0.5 * (squared_norm(p[1]) - squared_norm(p[0])),
+            0.5 * (squared_norm(p[2]) - squared_norm(p[0])),
+            0.5 * (squared_norm(p[3]) - squared_norm(p[0])),
+        ]
+
+        # Circumcenter c = Ainv * b
+        c = [
+            Ainv[0][0] * b[0] + Ainv[0][1] * b[1] + Ainv[0][2] * b[2],
+            Ainv[1][0] * b[0] + Ainv[1][1] * b[1] + Ainv[1][2] * b[2],
+            Ainv[2][0] * b[0] + Ainv[2][1] * b[1] + Ainv[2][2] * b[2],
+        ]
+
+        # Circumradius
+        dx = p[0][0] - c[0]
+        dy = p[0][1] - c[1]
+        dz = p[0][2] - c[2]
+        R = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+        # Shortest of the 6 tet edges
+        edges = ((0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3))
+
+        min_L2 = float("inf")
+        for j, k in edges:
+            ex = p[j][0] - p[k][0]
+            ey = p[j][1] - p[k][1]
+            ez = p[j][2] - p[k][2]
+            L2 = ex * ex + ey * ey + ez * ez
+            if L2 < min_L2:
+                min_L2 = L2
+
+        if min_L2 < eps:
+            return math.inf
+
+        L = math.sqrt(min_L2)
+
+        return R / L
 
     def onSavePresetButton(self) -> None:
         name = qt.QInputDialog().getText(None, 'Save', 'Save preset as: (will override an existing preset with the same name)')
