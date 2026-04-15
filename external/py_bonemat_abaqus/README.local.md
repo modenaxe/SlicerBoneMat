@@ -21,11 +21,14 @@ from py_bonemat_abaqus.run import run
 
 * `py_bonemat_abaqus/calc.py`
   * `_check_fle_exists(fle)`
-    * **Change**: instead of looking for files in the current directory, it checks if the given path exists
+    * **Changes**: instead of looking for files in the current directory, it checks if the given path exists
     * **Reason**: I'm writing files to a temporary directory instead of this one because I can't add files to the filesystem of a user.
+  * `_limit_num_materials(moduli, gapValue, minVal, groupingDensity)`
+    * **Changes**: changed the main binning loop to use a decreasing `end` variable to mark the end of the current array, rather than overwriting the array variable
+    * **Reason**: Performance improvements
 
 * `py_bonemat_abaqus/run.py`
   * `run(argv0, argv1, argv2)`
-    * **Change**: ends with `return` instead of `sys.exit(0)`
+    * **Changes**: ends with `return` instead of `sys.exit(0)`
     * **Reason**: `sys.exit(0)` exits the entire Slicer program instead of just the function when imported. Very necessary change
 

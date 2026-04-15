@@ -976,7 +976,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
     def getParameterNode(self):
         return BoneMatParameterNode(super().getParameterNode())
-    
 
     def displayOutputMesh(self, mesh):
         displayNode = mesh.GetDisplayNode()
@@ -1131,23 +1130,24 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             flipZ = True
 
         rg = vtk.vtkRectilinearGrid()
-        rg.SetDimensions(nx + 2, ny + 2, nz + 2) # +2 accounts for padding
+        dimPad = 2 * max(0, self.getParameterNode().ctPadDepth)
+        rg.SetDimensions(nx + dimPad, ny + dimPad, nz + dimPad) # accounts for padding
 
         xArr = vtk.vtkDoubleArray()
         xArr.SetName("X_COORDINATES")
-        xArr.SetNumberOfTuples(nx + 2)
+        xArr.SetNumberOfTuples(nx + dimPad)
         for i, v in enumerate(xs):
             xArr.SetValue(i, float(v))
 
         yArr = vtk.vtkDoubleArray()
         yArr.SetName("Y_COORDINATES")
-        yArr.SetNumberOfTuples(ny + 2)
+        yArr.SetNumberOfTuples(ny + dimPad)
         for j, v in enumerate(ys):
             yArr.SetValue(j, float(v))
 
         zArr = vtk.vtkDoubleArray()
         zArr.SetName("Z_COORDINATES")
-        zArr.SetNumberOfTuples(nz + 2)
+        zArr.SetNumberOfTuples(nz + dimPad)
         for k, v in enumerate(zs):
             zArr.SetValue(k, float(v))
 
@@ -1176,7 +1176,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         # Add cell data field to file to satisfy py_bonemat_abaqus requirements
         path = Path(outPath)
         lines = path.read_text(encoding="utf-8").splitlines(True)
-        nCells = (nx + 1) * (ny + 1) * (nz + 1) # +1 not -1 to account for padding
+        nCells = (nx + dimPad - 1) * (ny + dimPad - 1) * (nz + dimPad - 1)
         # Find POINT_DATA line and insert CELL_DATA before it
         for i, line in enumerate(lines):
             if line.strip().startswith("POINT_DATA"):
@@ -1311,73 +1311,71 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         self.displayOutputMesh(outputMesh)
 
-        print('done')
-
 
 #
 # BoneMatTest
 #
 
 
-class BoneMatTest(ScriptedLoadableModuleTest):
-    """
-    This is the test case for your scripted module.
-    Uses ScriptedLoadableModuleTest base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+# class BoneMatTest(ScriptedLoadableModuleTest):
+#     """
+#     This is the test case for your scripted module.
+#     Uses ScriptedLoadableModuleTest base class, available at:
+#     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
+#     """
 
-    def setUp(self):
-        """Do whatever is needed to reset the state - typically a scene clear will be enough."""
-        slicer.mrmlScene.Clear()
+#     def setUp(self):
+#         """Do whatever is needed to reset the state - typically a scene clear will be enough."""
+#         slicer.mrmlScene.Clear()
 
-    def runTest(self):
-        """Run as few or as many tests as needed here."""
-        self.setUp()
-        self.test_MyFirstModule1()
+#     def runTest(self):
+#         """Run as few or as many tests as needed here."""
+#         self.setUp()
+#         self.test_MyFirstModule1()
 
-    def test_MyFirstModule1(self):
-        """Ideally you should have several levels of tests.  At the lowest level
-        tests should exercise the functionality of the logic with different inputs
-        (both valid and invalid).  At higher levels your tests should emulate the
-        way the user would interact with your code and confirm that it still works
-        the way you intended.
-        One of the most important features of the tests is that it should alert other
-        developers when their changes will have an impact on the behavior of your
-        module.  For example, if a developer removes a feature that you depend on,
-        your test should break so they know that the feature is needed.
-        """
+#     def test_MyFirstModule1(self):
+#         """Ideally you should have several levels of tests.  At the lowest level
+#         tests should exercise the functionality of the logic with different inputs
+#         (both valid and invalid).  At higher levels your tests should emulate the
+#         way the user would interact with your code and confirm that it still works
+#         the way you intended.
+#         One of the most important features of the tests is that it should alert other
+#         developers when their changes will have an impact on the behavior of your
+#         module.  For example, if a developer removes a feature that you depend on,
+#         your test should break so they know that the feature is needed.
+#         """
 
-        self.delayDisplay("Starting the test")
+#         self.delayDisplay("Starting the test")
 
-        # Get/create input data
+#         # Get/create input data
 
-        import SampleData
+#         import SampleData
 
-        registerSampleData()
-        inputVolume = SampleData.downloadSample("MyFirstModule1")
-        self.delayDisplay("Loaded test data set")
+#         registerSampleData()
+#         inputVolume = SampleData.downloadSample("MyFirstModule1")
+#         self.delayDisplay("Loaded test data set")
 
-        inputScalarRange = inputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(inputScalarRange[0], 0)
-        self.assertEqual(inputScalarRange[1], 695)
+#         inputScalarRange = inputVolume.GetImageData().GetScalarRange()
+#         self.assertEqual(inputScalarRange[0], 0)
+#         self.assertEqual(inputScalarRange[1], 695)
 
-        outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-        threshold = 100
+#         outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+#         threshold = 100
 
-        # Test the module logic
+#         # Test the module logic
 
-        logic = BoneMatLogic()
+#         logic = BoneMatLogic()
 
-        # Test algorithm with non-inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, True)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], threshold)
+#         # Test algorithm with non-inverted threshold
+#         logic.process(inputVolume, outputVolume, threshold, True)
+#         outputScalarRange = outputVolume.GetImageData().GetScalarRange()
+#         self.assertEqual(outputScalarRange[0], inputScalarRange[0])
+#         self.assertEqual(outputScalarRange[1], threshold)
 
-        # Test algorithm with inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, False)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], inputScalarRange[1])
+#         # Test algorithm with inverted threshold
+#         logic.process(inputVolume, outputVolume, threshold, False)
+#         outputScalarRange = outputVolume.GetImageData().GetScalarRange()
+#         self.assertEqual(outputScalarRange[0], inputScalarRange[0])
+#         self.assertEqual(outputScalarRange[1], inputScalarRange[1])
 
-        self.delayDisplay("Test passed")
+#         self.delayDisplay("Test passed")
