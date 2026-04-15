@@ -1173,9 +1173,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         w.SetFileTypeToASCII()
         w.Write()
 
-        w.SetFileName('/Users/maxwellhogan/Desktop/test.vtk')
-        w.Write()
-
         # Add cell data field to file to satisfy py_bonemat_abaqus requirements
         path = Path(outPath)
         lines = path.read_text(encoding="utf-8").splitlines(True)
@@ -1222,8 +1219,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
             self.writeVolumeAsRectilinearGrid(inputCT, ctPath)
 
-            # return
-
             paraNode = self.getParameterNode()
             with open(paramsPath, 'w') as params:
                 params.writelines([
@@ -1258,8 +1253,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             ugridReader.SetFileName(mappedMeshPath)
             ugridReader.Update()
             ugrid = ugridReader.GetOutput()
-
-        # return
 
         numCells = ugrid.GetNumberOfCells()
         moduli = vtk.vtkDoubleArray()

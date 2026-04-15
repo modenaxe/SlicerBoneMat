@@ -12,11 +12,10 @@ __all__ = ['calc_mat_props']
 #-------------------------------------------------------------------------------
 import numpy as np
 from numpy import mean, arange, digitize, array
-from numpy import round as rnd
 from copy import deepcopy
 from py_bonemat_abaqus.classes import vtk_data
 import sys
-from bisect import bisect
+from bisect import bisect_right
 from operator import itemgetter
 
 #-------------------------------------------------------------------------------
@@ -281,26 +280,26 @@ def _limit_num_materials(moduli, gapValue, minVal, groupingDensity):
             else:
                 print('\n')
 
-	# calculate the modulus values
-        bins = arange(max(moduli), minVal-gapValue, -gapValue).tolist()
+	    # calculate the modulus values
         indices, sorted_moduli = list(zip(*sorted(enumerate(moduli), key=itemgetter(1))))
-        # work way through list adding modified modulus values
         new_moduli = [minVal] * len(moduli)
-        while len(sorted_moduli) > 0:
-                    b = bisect(sorted_moduli, sorted_moduli[-1]-gapValue)
-                    if groupingDensity == 'max':
-                            val = sorted_moduli[-1]
-                    elif groupingDensity =='mean':
-                            val = sum(sorted_moduli[b:]) / len(sorted_moduli[b:])
-                    else:
-                            raise IOError("Error: groupingDensity should be 'max' or 'mean' in parameters file")
-                    if val < minVal:
-                        val = minVal
-                    for i in indices[b:]:
-                            new_moduli[i] = val
-                    sorted_moduli = sorted_moduli[:b]
-                    indices = indices[:b]                        
+
+        end = len(moduli)
+        while end > 0:
+            maxVal = sorted_moduli[end - 1]
+            b = bisect_right(sorted_moduli, maxVal - gapValue, 0, end)
+            if groupingDensity == 'max':
+                val = maxVal
+            elif groupingDensity =='mean':
+                val = sum(sorted_moduli[b:end]) / (end - b)
+            else:
+                raise IOError("Error: groupingDensity should be 'max' or 'mean' in parameters file")
+            if val < minVal:
+                val = minVal
+            for i in indices[b:end]:
+                new_moduli[i] = val
+
+            end = b                       
                         
-        print(new_moduli[:100])
         return new_moduli
         
