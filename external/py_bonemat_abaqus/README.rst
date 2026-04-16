@@ -1,3 +1,12 @@
+.. warning::
+
+  This README is the original upstream README and is retained for attribution
+  only. Usage, installation, packaging, command-line, and example instructions
+  below may be outdated or inapplicable to this vendored BoneMat copy.
+	
+  See `README.local.md` for how this code is used and modified in the
+  BoneMat Slicer extension.
+
 =================
 py_bonemat_abaqus
 =================

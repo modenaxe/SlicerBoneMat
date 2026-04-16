@@ -33,7 +33,13 @@ Here is a brief description of how to use the various sections of the module's U
   * Some further clarification:
     * The 3 algorithm choices reflect the 3 published versions of BoneMat over the years
     * Poisson's ratio is used in the output formats, as it is important for the FEA solvers to perform simulations
+    * The number of integration steps refers to how many integration points the application will set in each element (when integrating using the v2 or v3 algorithms)
     * The gap value is the gap between the bins that the Young's modulus values are grouped into
+* Apply
+  * This will begin the main mapping procedure
+  * A progress bar will appear which gives an indication of the mapping procedure's progress
+    * Note that because the mapping procedure happens on the main UI thread within Slicer, the application will be unresponsive until mapping is complete.
+  * The elapsed time of the process will be displayed in the text box below
 * Download options
   * The extension currently supports 4 output formats, including:
     * VTK
