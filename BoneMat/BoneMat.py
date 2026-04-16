@@ -409,76 +409,26 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.calcMeshStatsButton.enabled = False
         self.ui.calcMeshStatsButton.text = 'Loading...'
         slicer.app.processEvents()
-        
-        ugrid = mesh.GetUnstructuredGrid()
-        mq = vtkMeshQuality()
-        volume = []
-        tetQuality = []
-        minEdge = []
-        maxEdge = []
 
-        for i in range(ugrid.GetNumberOfCells()):
-            cell = ugrid.GetCell(i)
+        numNodes, numCells, stats = self.logic.computeMeshStats(mesh, self._meshStats)
 
-            if cell.GetCellType() in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA]:
-                volume.append(mq.TetVolume(cell))
-                tetQuality.append(self.computeTetQuality(cell))
-            elif cell.GetCellType() in [vtk.VTK_PYRAMID]:
-                volume.append(mq.PyramidVolume(cell))
-            elif cell.GetCellType() in [vtk.VTK_WEDGE]:
-                volume.append(mq.WedgeVolume(cell))
-            elif cell.GetCellType() in [vtk.VTK_HEXAHEDRON, vtk.VTK_QUADRATIC_HEXAHEDRON, vtk.VTK_TRIQUADRATIC_HEXAHEDRON]:
-                volume.append(mq.HexVolume(cell))
-            else:
-                continue
-
-            squareEdgeLens = []
-            for e in range(cell.GetNumberOfEdges()):
-                pts = cell.GetEdge(e).GetPoints()
-                p1 = pts.GetPoint(0)
-                p2 = pts.GetPoint(1)
-                squareEdgeLens.append(
-                    (p1[0] - p2[0]) ** 2 +
-                    (p1[1] - p2[1]) ** 2 +
-                    (p1[2] - p2[2]) ** 2
-                )
-
-            minEdge.append(np.sqrt(np.min(squareEdgeLens)))
-            maxEdge.append(np.sqrt(np.max(squareEdgeLens)))
-
-        self._parameterNode.meshNodes = str(ugrid.GetNumberOfPoints())
-        self._parameterNode.meshElements = str(ugrid.GetNumberOfCells())
-
-        self._meshStats["meshMinVol"] = np.min(volume)
-        self._meshStats["meshMaxVol"] = np.max(volume)
-        self._meshStats["meshAvgVol"] = np.mean(volume)
-
-        self._meshStats["meshMinTetQual"] = np.min(tetQuality)
-        self._meshStats["meshMaxTetQual"] = np.max(tetQuality)
-        self._meshStats["meshAvgTetQual"] = np.mean(tetQuality)
-
-        self._meshStats["meshMinMinEdge"] = np.min(minEdge)
-        self._meshStats["meshMaxMinEdge"] = np.max(minEdge)
-        self._meshStats["meshAvgMinEdge"] = np.mean(minEdge)
-
-        self._meshStats["meshMinMaxEdge"] = np.min(maxEdge)
-        self._meshStats["meshMaxMaxEdge"] = np.max(maxEdge)
-        self._meshStats["meshAvgMaxEdge"] = np.mean(maxEdge)
+        self._parameterNode.meshNodes = str(numNodes)
+        self._parameterNode.meshElements = str(numCells)
 
         self.ui.calcMeshStatsButton.enabled = True
         self.ui.calcMeshStatsButton.text = 'Calculate'
 
-        self.createMeshStatsPlots(volume, tetQuality, minEdge, maxEdge)
+        self.createMeshStatsPlots(stats)
 
         self.onMeshStatSelection()
 
         self.appendLog('Mesh statistics calculated.')
 
-    def createMeshStatsPlots(self, volume, tetQuality, minEdge, maxEdge) -> None:
-        volumeTable = self.createMeshStatTable(volume)
-        tetQualityTable = self.createMeshStatTable(tetQuality)
-        minEdgeTable = self.createMeshStatTable(minEdge)
-        maxEdgeTable = self.createMeshStatTable(maxEdge)
+    def createMeshStatsPlots(self, stats) -> None:
+        volumeTable = self.createMeshStatTable(stats['volume'])
+        tetQualityTable = self.createMeshStatTable(stats['tetQuality'])
+        minEdgeTable = self.createMeshStatTable(stats['minEdge'])
+        maxEdgeTable = self.createMeshStatTable(stats['maxEdge'])
 
         # Get chart from widget
         chartView = self.ui.inputMeshStatsPlotView
@@ -563,11 +513,453 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self._parameterNode.meshMaxStat = str(round(self._meshStats["meshMaxMaxEdge"], 6))
                 self._parameterNode.meshAvgStat = str(round(self._meshStats["meshAvgMaxEdge"], 6))
 
+    def onSavePresetButton(self) -> None:
+        name = qt.QInputDialog().getText(None, 'Save', 'Save preset as: (will override an existing preset with the same name)')
+        if name is None or name == '':
+            return
+        if name == 'None':
+            message = qt.QMessageBox()
+            message.setText('"None" is a reserved preset name, choose another name')
+            message.exec()
+            return
+        
+        newPresetValues = {
+            'ctDensitySlope': self._parameterNode.ctDensitySlope,
+            'ctDensityIntercept': self._parameterNode.ctDensityIntercept,
+            'ashDensityOffset': self._parameterNode.ashDensityOffset,
+            'ashDensityScale': self._parameterNode.ashDensityScale,
+            'apparentDensityDivisor': self._parameterNode.apparentDensityDivisor,
+            'modulusScale': self._parameterNode.modulusScale,
+            'modulusExponent': self._parameterNode.modulusExponent
+        }
+        
+        settings = qt.QSettings()
+        presets = json.loads(settings.value('BoneMat/BoneDensityPresets'))
+        presets[name] = newPresetValues
+        settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
+
+        self.ui.presetSelector.addItem(name, newPresetValues)
+        index = self.ui.presetSelector.findText(name)
+        self.ui.presetSelector.setCurrentIndex(index)
+    
+    def onDeletePresetButton(self) -> None:
+        presetName = self.ui.presetSelector.currentText
+        if presetName == 'None':
+            message = qt.QMessageBox()
+            message.setText('Cannot delete "None" preset')
+            message.exec()
+            return
+        
+        settings = qt.QSettings()
+        presets = json.loads(settings.value('BoneMat/BoneDensityPresets'))
+        presets.pop(presetName)
+        settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
+
+        currIndex = self.ui.presetSelector.findText(presetName)
+        self.ui.presetSelector.removeItem(currIndex)
+        noneIndex = self.ui.presetSelector.findText('None')
+        self.ui.presetSelector.setCurrentIndex(noneIndex)
+
+    def onApplyButton(self) -> None:
+        """Run processing when user clicks "Apply" button."""
+        try:
+            self.ui.processLog.clear()
+            self.appendLog('Starting material assignment procedure.')
+
+            start = time.time()
+            self.logic.process(self._parameterNode.inputCT,
+                                self._parameterNode.inputVolMesh,
+                                self._parameterNode.outputVolMesh,
+                                self.ui.algoSelector.currentData,
+                                self.ui.progressBar)
+
+            self.appendLog(f'Material assignment complete.\nElapsed time (seconds): {time.time() - start}')
+        except Exception as e:
+            self.appendLog(f"ERROR: {e}")
+
+    def onDownloadButton(self) -> None:
+        outputModel = self._parameterNode.outputVolMesh
+        if not outputModel:
+            self.appendLog('ERROR: No output model available to export')
+            return
+        
+        format = self.ui.downloadFormatSelector.currentText
+        downloadExt = self.ui.downloadFormatSelector.currentData
+        
+        filePath = qt.QFileDialog.getSaveFileName(
+            slicer.util.mainWindow(),
+            "Save mesh as " + format,
+            slicer.app.defaultScenePath
+        )
+
+        if not filePath:
+            return
+
+        try:
+            root, ext = os.path.splitext(filePath)
+            if ext.lower() != downloadExt:
+                filePath = root + downloadExt
+
+            self.logic.exportOutputMesh(downloadExt,
+                                        filePath,
+                                        outputModel.GetUnstructuredGrid(),
+                                        self._parameterNode.poissonValue)
+            
+            self.appendLog(f"Mesh saved to: {filePath}")
+        except Exception as e:
+            self.appendLog(f"ERROR: Failed to save mesh: {e}")
+
+    def onPhantomCheckBox(self, checked) -> None:
+        if checked:
+            self.ui.phantomCalibrationTableWidget.enabled = True
+            self.ui.ctDensitySlopeSpinBox.enabled = False
+            self.ui.ctDensityInterceptSpinBox.enabled = False
+        else:
+            self.ui.phantomCalibrationTableWidget.enabled = False
+            self.ui.ctDensitySlopeSpinBox.enabled = True
+            self.ui.ctDensityInterceptSpinBox.enabled = True
+
+    def onPhantomCellChange(self, row, col) -> None:
+        table = self.ui.phantomCalibrationTableWidget
+
+        try:
+            float(table.item(row, col).text())
+        except ValueError:
+            table.item(row, col).setText('')
+            return
+        
+        cellItems = [table.item(0, 0), table.item(0, 1), table.item(1, 0), table.item(1, 1)]
+        if len([x for x in cellItems if x is not None and x.text() != '']) < 4:
+            return
+        
+        slope, intercept = self.logic.calcDensityVars(cellItems)
+
+        self.ui.ctDensitySlopeSpinBox.value = slope
+        self.ui.ctDensityInterceptSpinBox.value = intercept
+
+    def appendLog(self, errMsg) -> None:
+        log = self.ui.processLog
+        log.appendPlainText(errMsg)
+
+        scrollbar = log.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum)
+
+#
+# BoneMatLogic
+#
+
+
+class BoneMatLogic(ScriptedLoadableModuleLogic):
+    """This class should implement all the actual
+    computation done by your module.  The interface
+    should be such that other python code can import
+    this class and make use of the functionality without
+    requiring an instance of the Widget.
+    Uses ScriptedLoadableModuleLogic base class, available at:
+    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
+    """
+
+    def __init__(self) -> None:
+        """Called when the logic class is instantiated. Can be used for initializing member variables."""
+        ScriptedLoadableModuleLogic.__init__(self)
+
+    def getParameterNode(self):
+        return BoneMatParameterNode(super().getParameterNode())      
+
+    def process(self, inputCT, inputMesh, outputMesh, algorithm, progressBar):
+        """
+        Assign material properties to output volumetric mesh from input CT data
+        """
+        ugrid = inputMesh.GetUnstructuredGrid()
+        if not ugrid:
+            raise Exception('Input mesh must be volumetric, not a surface')
+        
+        cellTypes = vtk.vtkCellTypes()
+        ugrid.GetCellTypes(cellTypes)
+        if cellTypes.GetNumberOfTypes() > 1:
+            raise Exception('Input mesh must be homogenous (i.e. all elements are the same type)')
+        if cellTypes.GetCellType(0) not in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA, vtk.VTK_WEDGE, vtk.VTK_HEXAHEDRON]:
+            raise Exception('Input mesh elements must be linear tet, quadratic tet, linear wedge or linear hex elements')
+
+        params = self.getParams(algorithm)
+        meshPart = self.getMeshPart(ugrid)
+        vtkCT = self.getVtkCTData(inputCT)
+
+        progressBar.setValue(0)
+        progressBar.show()
+
+        _check_elements_in_CT(meshPart, vtkCT)
+        mappedMeshPart = _assign_mat_props(meshPart, params, vtkCT, progressBar)
+        mappedMeshPart.moduli = _limit_num_materials(mappedMeshPart.moduli, 
+                                                      params['gapValue'], 
+                                                      params['minVal'], 
+                                                      params['groupingDensity'])
+
+        numCells = ugrid.GetNumberOfCells()
+        moduli = vtk.vtkDoubleArray()
+        moduli.SetName('YoungsModulus')
+        moduli.SetNumberOfComponents(1)
+        moduli.SetNumberOfTuples(numCells)
+
+        for cellId in range(numCells):
+            moduli.SetValue(cellId, mappedMeshPart.moduli[cellId])
+
+        progressBar.hide()
+
+        cellData = ugrid.GetCellData()
+        if cellData.GetAbstractArray('YoungsModulus') is not None:
+            cellData.RemoveArray('YoungsModulus')
+        
+        cellData.AddArray(moduli)
+        cellData.SetScalars(moduli)
+
+        outputMesh.SetAndObserveMesh(ugrid)
+
+        self.displayOutputMesh(outputMesh)
+
+    def getParams(self, algorithm) -> dict:
+        paraNode = self.getParameterNode()
+        params = {
+            'integration': algorithm,
+            'gapValue': float(paraNode.gapValue),
+            'groupingDensity': 'max',
+            'intSteps': paraNode.numIntegrationSteps,
+            'rhoQCTa': paraNode.ctDensityIntercept,
+            'rhoQCTb': paraNode.ctDensitySlope,
+            'calibrationCorrect': True,
+            'numCTparam': 'single',
+            'rhoAsha1': paraNode.ashDensityOffset / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
+            'rhoAshb1': 1 / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
+            'numEparam': 'single',
+            'Ea1': 0.0,
+            'Eb1': paraNode.modulusScale,
+            'Ec1': paraNode.modulusExponent,
+            'minVal': paraNode.minModulus,
+            'poisson': paraNode.poissonValue
+        }
+        _checkParamInformation(params)
+
+        return params
+
+    def getMeshPart(self, ugrid) -> part:
+        points = []
+        for i in range(ugrid.GetNumberOfPoints()):
+            points.append(ugrid.GetPoint(i))
+
+        cells = []
+        # mesh was checked for homogeneity in 'process' 
+        numPts = ugrid.GetCell(0).GetNumberOfPoints()
+        for i in range(ugrid.GetNumberOfCells()):
+            cell = ugrid.GetCell(i)
+            pointIds = [cell.GetPointIds().GetId(j) for j in range(numPts)]
+            cells.append([i] + pointIds)
+
+        cellName = ''
+        cellType = ''
+        vtkCellType = ugrid.GetCell(0).GetCellType()
+        if vtkCellType == vtk.VTK_TETRA:
+            cellName = 'C3D4'
+            cellType = 'linear_tet'
+        elif vtkCellType == vtk.VTK_QUADRATIC_TETRA:
+            cellName = 'C3D10'
+            cellType = 'quad_tet'
+        elif vtkCellType == vtk.VTK_WEDGE:
+            cellName = 'C3D6'
+            cellType = 'linear_wedge'
+        elif vtkCellType == vtk.VTK_HEXAHEDRON:
+            cellName = 'C3D8'
+            cellType = 'linear_hex'
+
+        return _create_part('input_mesh', cells, cellName, cellType, points)
+    
+    def getVtkCTData(self, volNode):
+        """
+        Writes a Slicer vtkMRMLScalarVolumeNode as a legacy VTK RECTILINEAR_GRID ASCII file
+        with explicit X_COORDINATES / Y_COORDINATES / Z_COORDINATES and POINT_DATA scalars,
+        as required by py_bonemat_abaqus.
+        Assumes the volume axes are not obliquely rotated.
+        """
+        img = volNode.GetImageData()
+        if img is None:
+            raise ValueError("Volume node has no image data")
+        
+        padDepth = self.getParameterNode().ctPadDepth
+        if padDepth < 0:
+            raise Exception('CT padding voxel depth must be >= 0')
+
+        nx, ny, nz = img.GetDimensions()
+
+        ijkToRas = vtk.vtkMatrix4x4()
+        volNode.GetIJKToRASMatrix(ijkToRas)
+
+        def ras_of(i, j, k):
+            v = [i, j, k, 1.0]
+            out = [0.0, 0.0, 0.0, 1.0]
+            ijkToRas.MultiplyPoint(v, out)
+            return out[0], out[1], out[2]
+
+        # Build coordinate arrays in ascending order
+        xs = np.array([ras_of(i, 0, 0)[0] for i in range(nx)], dtype=np.float64)
+        ys = np.array([ras_of(0, j, 0)[1] for j in range(ny)], dtype=np.float64)
+        zs = np.array([ras_of(0, 0, k)[2] for k in range(nz)], dtype=np.float64)
+
+        # Add extra coordinates at the front and back for padding later
+        # assumes CT data is larger than a single voxel
+        xDiff = xs[1] - xs[0]
+        leftXPadding = xs[0] - xDiff * np.arange(padDepth, 0, -1)
+        rightXPadding = xs[nx - 1] + xDiff * np.arange(1, padDepth + 1)
+        xs = np.concatenate((leftXPadding, xs, rightXPadding))
+
+        yDiff = ys[1] - ys[0]
+        leftYPadding = ys[0] - yDiff * np.arange(padDepth, 0, -1)
+        rightYPadding = ys[ny - 1] + yDiff * np.arange(1, padDepth + 1)
+        ys = np.concatenate((leftYPadding, ys, rightYPadding))
+
+        zDiff = zs[1] - zs[0]
+        leftZPadding = zs[0] - zDiff * np.arange(padDepth, 0, -1)
+        rightZPadding = zs[nz - 1] + zDiff * np.arange(1, padDepth + 1)
+        zs = np.concatenate((leftZPadding, zs, rightZPadding))
+        
+        flipX = False
+        flipY = False
+        flipZ = False
+        if xs[0] > xs[-1]:
+            xs = xs[::-1]
+            flipX = True
+        if ys[0] > ys[-1]:
+            ys = ys[::-1]
+            flipY = True
+        if zs[0] > zs[-1]:
+            zs = zs[::-1]
+            flipZ = True
+
+        # Copy scalars from image data to rectilinear grid point data
+        scalars = img.GetPointData().GetScalars()
+        if scalars is None:
+            raise Exception("CT image data has no point scalars (i.e. HU data)")
+        if scalars.GetNumberOfTuples() != nx * ny * nz:
+            raise Exception("CT image data count does not match volume dimensions")
+
+        newScalars = self.reorderedPaddedScalars(img, flipX, flipY, flipZ)
+
+        return vtk_data(xs, ys, zs, newScalars)
+    
+    def reorderedPaddedScalars(self, img, flipX, flipY, flipZ):
+        nx, ny, nz = img.GetDimensions()
+        scalars = img.GetPointData().GetScalars()
+
+        arr = numpy_support.vtk_to_numpy(scalars)
+
+        # VTK point ordering: i fastest, then j, then k
+        vol = arr.reshape((nz, ny, nx))
+
+        if flipX:
+            vol = vol[:, :, ::-1]
+        if flipY:
+            vol = vol[:, ::-1, :]
+        if flipZ:
+            vol = vol[::-1, :, :]
+
+        # add user-specified voxel buffer of HU values around CT data
+        paraNode = self.getParameterNode()
+        if paraNode.ctPadDepth > 0:
+            padShape = ((paraNode.ctPadDepth, paraNode.ctPadDepth),) * 3
+            paddedVol = np.pad(vol, padShape, mode='constant', constant_values=paraNode.ctPadValue)
+        else:
+            paddedVol = vol
+
+        return np.ascontiguousarray(paddedVol.reshape(-1))
+    
+    def displayOutputMesh(self, mesh):
+        displayNode = mesh.GetDisplayNode()
+        if not displayNode:
+            displayNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelDisplayNode')
+            mesh.SetAndObserveDisplayNodeID(displayNode.GetID())
+
+        # colour the mesh by YoungsModulus value
+        displayNode.SetScalarVisibility(True)
+        displayNode.SetActiveScalar('YoungsModulus', vtk.vtkAssignAttribute.CELL_DATA)
+        displayNode.SetScalarRangeFlag(displayNode.UseDataScalarRange)
+
+        # enable and tweak the colour legend for this display
+        colourNode = slicer.util.getNode('DivergingBlueRed')
+        if colourNode is not None:
+            displayNode.SetAndObserveColorNodeID(colourNode.GetID())
+
+        legendNode = slicer.modules.colors.logic().AddDefaultColorLegendDisplayNode(mesh)
+        legendNode.SetVisibility(True)
+        legendNode.SetNumberOfLabels(3)
+        legendNode.SetTitleText('Young\'s Modulus')
+        legendNode.SetLabelFormat('%.0f')
+        legendNode.SetSize(0.1, 0.5)
+
+        mesh.SetDisplayVisibility(True) 
+
+    def computeMeshStats(self, mesh, meshStats) -> dict:
+        ugrid = mesh.GetUnstructuredGrid()
+        mq = vtkMeshQuality()
+        volume = []
+        tetQuality = []
+        minEdge = []
+        maxEdge = []
+
+        for i in range(ugrid.GetNumberOfCells()):
+            cell = ugrid.GetCell(i)
+
+            if cell.GetCellType() in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA]:
+                volume.append(mq.TetVolume(cell))
+                tetQuality.append(self.computeTetQuality(cell))
+            elif cell.GetCellType() in [vtk.VTK_PYRAMID]:
+                volume.append(mq.PyramidVolume(cell))
+            elif cell.GetCellType() in [vtk.VTK_WEDGE]:
+                volume.append(mq.WedgeVolume(cell))
+            elif cell.GetCellType() in [vtk.VTK_HEXAHEDRON, vtk.VTK_QUADRATIC_HEXAHEDRON, vtk.VTK_TRIQUADRATIC_HEXAHEDRON]:
+                volume.append(mq.HexVolume(cell))
+            else:
+                continue
+
+            squareEdgeLens = []
+            for e in range(cell.GetNumberOfEdges()):
+                pts = cell.GetEdge(e).GetPoints()
+                p1 = pts.GetPoint(0)
+                p2 = pts.GetPoint(1)
+                squareEdgeLens.append(
+                    (p1[0] - p2[0]) ** 2 +
+                    (p1[1] - p2[1]) ** 2 +
+                    (p1[2] - p2[2]) ** 2
+                )
+
+            minEdge.append(np.sqrt(np.min(squareEdgeLens)))
+            maxEdge.append(np.sqrt(np.max(squareEdgeLens)))
+
+        meshStats["meshMinVol"] = np.min(volume)
+        meshStats["meshMaxVol"] = np.max(volume)
+        meshStats["meshAvgVol"] = np.mean(volume)
+
+        meshStats["meshMinTetQual"] = np.min(tetQuality)
+        meshStats["meshMaxTetQual"] = np.max(tetQuality)
+        meshStats["meshAvgTetQual"] = np.mean(tetQuality)
+
+        meshStats["meshMinMinEdge"] = np.min(minEdge)
+        meshStats["meshMaxMinEdge"] = np.max(minEdge)
+        meshStats["meshAvgMinEdge"] = np.mean(minEdge)
+
+        meshStats["meshMinMaxEdge"] = np.min(maxEdge)
+        meshStats["meshMaxMaxEdge"] = np.max(maxEdge)
+        meshStats["meshAvgMaxEdge"] = np.mean(maxEdge)
+
+        stats = {
+            'volume': volume,
+            'tetQuality': tetQuality,
+            'minEdge': minEdge,
+            'maxEdge': maxEdge
+        }
+        return ugrid.GetNumberOfPoints(), ugrid.GetNumberOfCells(), stats
+    
     # Calculates radius-edge ratio of tets
     # Transcribes the FEBio Studio source code's C++ implementation
     def computeTetQuality(self, cell) -> float:
         points = cell.GetPoints()
-
         # Read the first 4 nodal coordinates
         p = [points.GetPoint(i) for i in range(4)]
 
@@ -651,72 +1043,22 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         L = math.sqrt(min_L2)
 
         return R / L
-
-    def onSavePresetButton(self) -> None:
-        name = qt.QInputDialog().getText(None, 'Save', 'Save preset as: (will override an existing preset with the same name)')
-        if name is None or name == '':
-            return
-        if name == 'None':
-            message = qt.QMessageBox()
-            message.setText('"None" is a reserved preset name, choose another name')
-            message.exec()
-            return
-        
-        newPresetValues = {
-            'ctDensitySlope': self._parameterNode.ctDensitySlope,
-            'ctDensityIntercept': self._parameterNode.ctDensityIntercept,
-            'ashDensityOffset': self._parameterNode.ashDensityOffset,
-            'ashDensityScale': self._parameterNode.ashDensityScale,
-            'apparentDensityDivisor': self._parameterNode.apparentDensityDivisor,
-            'modulusScale': self._parameterNode.modulusScale,
-            'modulusExponent': self._parameterNode.modulusExponent
-        }
-        
-        settings = qt.QSettings()
-        presets = json.loads(settings.value('BoneMat/BoneDensityPresets'))
-        presets[name] = newPresetValues
-        settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
-
-        self.ui.presetSelector.addItem(name, newPresetValues)
-        index = self.ui.presetSelector.findText(name)
-        self.ui.presetSelector.setCurrentIndex(index)
     
-    def onDeletePresetButton(self) -> None:
-        presetName = self.ui.presetSelector.currentText
-        if presetName == 'None':
-            message = qt.QMessageBox()
-            message.setText('Cannot delete "None" preset')
-            message.exec()
-            return
-        
-        settings = qt.QSettings()
-        presets = json.loads(settings.value('BoneMat/BoneDensityPresets'))
-        presets.pop(presetName)
-        settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
+    def exportOutputMesh(self, ext, filePath, ugrid, poisson) -> None:
+        if ext == '.vtk':
+            ugridWriter = vtk.vtkUnstructuredGridWriter()
+            ugridWriter.SetFileName(filePath)
+            ugridWriter.SetInputData(ugrid)
+            ugridWriter.SetFileTypeToASCII()
+            ugridWriter.Write()
+        elif ext == '.inp':
+            self.exportAbaqusMesh(ugrid, filePath, poisson)
+        elif ext == '.feb':
+            self.exportFebioMesh(ugrid, filePath, poisson)
+        elif ext == '.cdb':
+            self.exportAnsysMesh(ugrid, filePath, poisson)
 
-        currIndex = self.ui.presetSelector.findText(presetName)
-        self.ui.presetSelector.removeItem(currIndex)
-        noneIndex = self.ui.presetSelector.findText('None')
-        self.ui.presetSelector.setCurrentIndex(noneIndex)
-
-    def onApplyButton(self) -> None:
-        """Run processing when user clicks "Apply" button."""
-        try:
-            self.ui.processLog.clear()
-            self.appendLog('Starting material assignment procedure.')
-
-            start = time.time()
-            self.logic.process(self._parameterNode.inputCT,
-                                self._parameterNode.inputVolMesh,
-                                self._parameterNode.outputVolMesh,
-                                self.ui.algoSelector.currentData,
-                                self.ui.progressBar)
-
-            self.appendLog(f'Material assignment complete.\nElapsed time (seconds): {time.time() - start}')
-        except Exception as e:
-            self.appendLog(f"ERROR: {e}")
-
-    def exportAbaqusMesh(self, ugrid, filePath) -> None:
+    def exportAbaqusMesh(self, ugrid, filePath, poisson) -> None:
         lines = [
             '*Heading\n',
             'Abaqus DataFile Version 6.14\n',
@@ -774,13 +1116,13 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             lines.extend([
                 f'*Material, name=BoneMat_{matNum}\n',
                 '*Elastic\n',
-                f'{mod}, {self._parameterNode.poissonValue}\n'
+                f'{mod}, {poisson}\n'
             ])
 
         with open(filePath, 'w') as f:
             f.writelines(lines)
 
-    def exportFebioMesh(self, ugrid, filePath) -> None:
+    def exportFebioMesh(self, ugrid, filePath, poisson) -> None:
         lines = [
             '<?xml version="1.0" encoding="ISO-8859-1"?>\n',
             '<febio_spec version="4.0">\n'
@@ -805,7 +1147,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             '\t<Material>\n',
             '\t\t<material id="1" name="youngs_modulus" type="isotropic elastic">\n',
             '\t\t\t<E type="map">moduli_map</E>\n',
-            f'\t\t\t<v>{self._parameterNode.poissonValue}</v>\n',
+            f'\t\t\t<v>{poisson}</v>\n',
             '\t\t</material>\n'
             '\t</Material>\n'
         ])
@@ -856,7 +1198,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         with open(filePath, 'w') as f:
             f.writelines(lines)
 
-    def exportAnsysMesh(self, ugrid, filePath) -> None:
+    def exportAnsysMesh(self, ugrid, filePath, poisson) -> None:
         lines = ['/PREP7\n\n']
 
         ptsToCellType = {
@@ -874,7 +1216,6 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
         if vtkModuli is None:
             raise Exception('Output model has no attached Young\'s Modulus data')
-            return
 
         moduli = numpy_support.vtk_to_numpy(vtkModuli)
         modSet = np.sort(np.unique(moduli))
@@ -883,7 +1224,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         for matNum, mod in indexToMod:
             lines.extend([
                 f'MP,EX,{matNum},{mod}\n',
-                f'MP,NUXY,{matNum},{self._parameterNode.poissonValue}\n\n'
+                f'MP,NUXY,{matNum},{poisson}\n\n'
             ])
 
         pts = ugrid.GetPoints()
@@ -904,400 +1245,10 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         with open(filePath, 'w') as f:
             f.writelines(lines)
-
-    def onDownloadButton(self) -> None:
-        outputModel = self._parameterNode.outputVolMesh
-        if not outputModel:
-            self.appendLog('ERROR: No output model available to export')
-            return
-        
-        format = self.ui.downloadFormatSelector.currentText
-        downloadExt = self.ui.downloadFormatSelector.currentData
-        
-        filePath = qt.QFileDialog.getSaveFileName(
-            slicer.util.mainWindow(),
-            "Save mesh as " + format,
-            slicer.app.defaultScenePath
-        )
-
-        if not filePath:
-            return
-
-        try:
-            root, ext = os.path.splitext(filePath)
-            if ext.lower() != downloadExt:
-                filePath = root + downloadExt
-
-            if downloadExt == '.vtk':
-                ugridWriter = vtk.vtkUnstructuredGridWriter()
-                ugridWriter.SetFileName(filePath)
-                ugridWriter.SetInputData(outputModel.GetUnstructuredGrid())
-                ugridWriter.SetFileTypeToASCII()
-                ugridWriter.Write()
-            elif downloadExt == '.inp':
-                self.exportAbaqusMesh(outputModel.GetUnstructuredGrid(), filePath)
-            elif downloadExt == '.feb':
-                self.exportFebioMesh(outputModel.GetUnstructuredGrid(), filePath)
-            elif downloadExt == '.cdb':
-                self.exportAnsysMesh(outputModel.GetUnstructuredGrid(), filePath)
-            
-            self.appendLog(f"Mesh saved to: {filePath}")
-        except Exception as e:
-            self.appendLog(f"ERROR: Failed to save mesh: {e}")
-
-    def onPhantomCheckBox(self, checked) -> None:
-        if checked:
-            self.ui.phantomCalibrationTableWidget.enabled = True
-            self.ui.ctDensitySlopeSpinBox.enabled = False
-            self.ui.ctDensityInterceptSpinBox.enabled = False
-        else:
-            self.ui.phantomCalibrationTableWidget.enabled = False
-            self.ui.ctDensitySlopeSpinBox.enabled = True
-            self.ui.ctDensityInterceptSpinBox.enabled = True
-
-    def onPhantomCellChange(self, row, col) -> None:
-        table = self.ui.phantomCalibrationTableWidget
-
-        try:
-            float(table.item(row, col).text())
-        except ValueError:
-            table.item(row, col).setText('')
-            return
-        
-        cellItems = [table.item(0, 0), table.item(0, 1), table.item(1, 0), table.item(1, 1)]
-        if len([x for x in cellItems if x is not None and x.text() != '']) < 4:
-            return
-        
+    
+    def calcDensityVars(self, cellItems) -> tuple:
         nums = [float(x.text()) for x in cellItems]
         slope = (nums[1] - nums[3]) / (nums[0] - nums[2])
         intercept = nums[1] - slope * nums[0]
+        return slope / 1000, intercept / 1000
 
-        self.ui.ctDensitySlopeSpinBox.value = slope / 1000
-        self.ui.ctDensityInterceptSpinBox.value = intercept / 1000
-
-    def appendLog(self, errMsg) -> None:
-        log = self.ui.processLog
-        log.appendPlainText(errMsg)
-
-        scrollbar = log.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum)
-
-#
-# BoneMatLogic
-#
-
-
-class BoneMatLogic(ScriptedLoadableModuleLogic):
-    """This class should implement all the actual
-    computation done by your module.  The interface
-    should be such that other python code can import
-    this class and make use of the functionality without
-    requiring an instance of the Widget.
-    Uses ScriptedLoadableModuleLogic base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
-    def __init__(self) -> None:
-        """Called when the logic class is instantiated. Can be used for initializing member variables."""
-        ScriptedLoadableModuleLogic.__init__(self)
-
-    def getParameterNode(self):
-        return BoneMatParameterNode(super().getParameterNode())
-
-    def displayOutputMesh(self, mesh):
-        displayNode = mesh.GetDisplayNode()
-        if not displayNode:
-            displayNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelDisplayNode')
-            mesh.SetAndObserveDisplayNodeID(displayNode.GetID())
-
-        # colour the mesh by YoungsModulus value
-        displayNode.SetScalarVisibility(True)
-        displayNode.SetActiveScalar('YoungsModulus', vtk.vtkAssignAttribute.CELL_DATA)
-        displayNode.SetScalarRangeFlag(displayNode.UseDataScalarRange)
-
-        # enable and tweak the colour legend for this display
-        colourNode = slicer.util.getNode('DivergingBlueRed')
-        if colourNode is not None:
-            displayNode.SetAndObserveColorNodeID(colourNode.GetID())
-
-        legendNode = slicer.modules.colors.logic().AddDefaultColorLegendDisplayNode(mesh)
-        legendNode.SetVisibility(True)
-        legendNode.SetNumberOfLabels(3)
-        legendNode.SetTitleText('Young\'s Modulus')
-        legendNode.SetLabelFormat('%.0f')
-        legendNode.SetSize(0.1, 0.5)
-
-        mesh.SetDisplayVisibility(True)
-    
-    def reorderedPaddedScalars(self, img, flipX, flipY, flipZ):
-        nx, ny, nz = img.GetDimensions()
-        scalars = img.GetPointData().GetScalars()
-
-        arr = numpy_support.vtk_to_numpy(scalars)
-
-        # VTK point ordering: i fastest, then j, then k
-        vol = arr.reshape((nz, ny, nx))
-
-        if flipX:
-            vol = vol[:, :, ::-1]
-        if flipY:
-            vol = vol[:, ::-1, :]
-        if flipZ:
-            vol = vol[::-1, :, :]
-
-        # add user-specified voxel buffer of HU values around CT data
-        paraNode = self.getParameterNode()
-        if paraNode.ctPadDepth > 0:
-            padShape = ((paraNode.ctPadDepth, paraNode.ctPadDepth),) * 3
-            paddedVol = np.pad(vol, padShape, mode='constant', constant_values=paraNode.ctPadValue)
-        else:
-            paddedVol = vol
-
-        return np.ascontiguousarray(paddedVol.reshape(-1))        
-    
-    def getVtkCTData(self, volNode):
-        """
-        Writes a Slicer vtkMRMLScalarVolumeNode as a legacy VTK RECTILINEAR_GRID ASCII file
-        with explicit X_COORDINATES / Y_COORDINATES / Z_COORDINATES and POINT_DATA scalars,
-        as required by py_bonemat_abaqus.
-        Assumes the volume axes are not obliquely rotated.
-        """
-        img = volNode.GetImageData()
-        if img is None:
-            raise ValueError("Volume node has no image data")
-        
-        padDepth = self.getParameterNode().ctPadDepth
-        if padDepth < 0:
-            raise Exception('CT padding voxel depth must be >= 0')
-
-        nx, ny, nz = img.GetDimensions()
-
-        ijkToRas = vtk.vtkMatrix4x4()
-        volNode.GetIJKToRASMatrix(ijkToRas)
-
-        def ras_of(i, j, k):
-            v = [i, j, k, 1.0]
-            out = [0.0, 0.0, 0.0, 1.0]
-            ijkToRas.MultiplyPoint(v, out)
-            return out[0], out[1], out[2]
-
-        # Build coordinate arrays in ascending order
-        xs = np.array([ras_of(i, 0, 0)[0] for i in range(nx)], dtype=np.float64)
-        ys = np.array([ras_of(0, j, 0)[1] for j in range(ny)], dtype=np.float64)
-        zs = np.array([ras_of(0, 0, k)[2] for k in range(nz)], dtype=np.float64)
-
-        # Add extra coordinates at the front and back for padding later
-        # assumes CT data is larger than a single voxel
-        xDiff = xs[1] - xs[0]
-        leftXPadding = xs[0] - xDiff * np.arange(padDepth, 0, -1)
-        rightXPadding = xs[nx - 1] + xDiff * np.arange(1, padDepth + 1)
-        xs = np.concatenate((leftXPadding, xs, rightXPadding))
-
-        yDiff = ys[1] - ys[0]
-        leftYPadding = ys[0] - yDiff * np.arange(padDepth, 0, -1)
-        rightYPadding = ys[ny - 1] + yDiff * np.arange(1, padDepth + 1)
-        ys = np.concatenate((leftYPadding, ys, rightYPadding))
-
-        zDiff = zs[1] - zs[0]
-        leftZPadding = zs[0] - zDiff * np.arange(padDepth, 0, -1)
-        rightZPadding = zs[nz - 1] + zDiff * np.arange(1, padDepth + 1)
-        zs = np.concatenate((leftZPadding, zs, rightZPadding))
-        
-        flipX = False
-        flipY = False
-        flipZ = False
-        if xs[0] > xs[-1]:
-            xs = xs[::-1]
-            flipX = True
-        if ys[0] > ys[-1]:
-            ys = ys[::-1]
-            flipY = True
-        if zs[0] > zs[-1]:
-            zs = zs[::-1]
-            flipZ = True
-
-        # Copy scalars from image data to rectilinear grid point data
-        scalars = img.GetPointData().GetScalars()
-        if scalars is None:
-            raise Exception("CT image data has no point scalars (i.e. HU data)")
-        if scalars.GetNumberOfTuples() != nx * ny * nz:
-            raise Exception("CT image data count does not match volume dimensions")
-
-        newScalars = self.reorderedPaddedScalars(img, flipX, flipY, flipZ)
-
-        return vtk_data(xs, ys, zs, newScalars)
-
-    def getParams(self, algorithm) -> dict:
-        paraNode = self.getParameterNode()
-        params = {
-            'integration': algorithm,
-            'gapValue': float(paraNode.gapValue),
-            'groupingDensity': 'max',
-            'intSteps': paraNode.numIntegrationSteps,
-            'rhoQCTa': paraNode.ctDensityIntercept,
-            'rhoQCTb': paraNode.ctDensitySlope,
-            'calibrationCorrect': True,
-            'numCTparam': 'single',
-            'rhoAsha1': paraNode.ashDensityOffset / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
-            'rhoAshb1': 1 / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
-            'numEparam': 'single',
-            'Ea1': 0.0,
-            'Eb1': paraNode.modulusScale,
-            'Ec1': paraNode.modulusExponent,
-            'minVal': paraNode.minModulus,
-            'poisson': paraNode.poissonValue
-        }
-        _checkParamInformation(params)
-
-        return params
-
-    def getMeshPart(self, ugrid) -> part:
-        points = []
-        for i in range(ugrid.GetNumberOfPoints()):
-            points.append(ugrid.GetPoint(i))
-
-        cells = []
-        # mesh was checked for homogeneity in 'process' 
-        numPts = ugrid.GetCell(0).GetNumberOfPoints()
-        for i in range(ugrid.GetNumberOfCells()):
-            cell = ugrid.GetCell(i)
-            pointIds = [cell.GetPointIds().GetId(j) for j in range(numPts)]
-            cells.append([i] + pointIds)
-
-        cellName = ''
-        cellType = ''
-        vtkCellType = ugrid.GetCell(0).GetCellType()
-        if vtkCellType == vtk.VTK_TETRA:
-            cellName = 'C3D4'
-            cellType = 'linear_tet'
-        elif vtkCellType == vtk.VTK_QUADRATIC_TETRA:
-            cellName = 'C3D10'
-            cellType = 'quad_tet'
-        elif vtkCellType == vtk.VTK_WEDGE:
-            cellName = 'C3D6'
-            cellType = 'linear_wedge'
-        elif vtkCellType == vtk.VTK_HEXAHEDRON:
-            cellName = 'C3D8'
-            cellType = 'linear_hex'
-
-        return _create_part('input_mesh', cells, cellName, cellType, points)
-
-    def process(self, inputCT, inputMesh, outputMesh, algorithm, progressBar):
-        """
-        Assign material properties to output volumetric mesh from input CT data
-        """
-        ugrid = inputMesh.GetUnstructuredGrid()
-        if not ugrid:
-            raise Exception('Input mesh must be volumetric, not a surface')
-        
-        cellTypes = vtk.vtkCellTypes()
-        ugrid.GetCellTypes(cellTypes)
-        if cellTypes.GetNumberOfTypes() > 1:
-            raise Exception('Input mesh must be homogenous (i.e. all elements are the same type)')
-        if cellTypes.GetCellType(0) not in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA, vtk.VTK_WEDGE, vtk.VTK_HEXAHEDRON]:
-            raise Exception('Input mesh elements must be linear tet, quadratic tet, linear wedge or linear hex elements')
-
-        params = self.getParams(algorithm)
-        meshPart = self.getMeshPart(ugrid)
-        vtkCT = self.getVtkCTData(inputCT)
-
-        progressBar.setValue(0)
-        progressBar.show()
-
-        _check_elements_in_CT(meshPart, vtkCT)
-        mappedMeshPart = _assign_mat_props(meshPart, params, vtkCT, progressBar)
-        mappedMeshPart.moduli = _limit_num_materials(mappedMeshPart.moduli, 
-                                                      params['gapValue'], 
-                                                      params['minVal'], 
-                                                      params['groupingDensity'])
-
-        numCells = ugrid.GetNumberOfCells()
-        moduli = vtk.vtkDoubleArray()
-        moduli.SetName('YoungsModulus')
-        moduli.SetNumberOfComponents(1)
-        moduli.SetNumberOfTuples(numCells)
-
-        for cellId in range(numCells):
-            moduli.SetValue(cellId, mappedMeshPart.moduli[cellId])
-
-        progressBar.hide()
-
-        cellData = ugrid.GetCellData()
-        if cellData.GetAbstractArray('YoungsModulus') is not None:
-            cellData.RemoveArray('YoungsModulus')
-        
-        cellData.AddArray(moduli)
-        cellData.SetScalars(moduli)
-
-        outputMesh.SetAndObserveMesh(ugrid)
-
-        self.displayOutputMesh(outputMesh)
-
-
-#
-# BoneMatTest
-#
-
-
-# class BoneMatTest(ScriptedLoadableModuleTest):
-#     """
-#     This is the test case for your scripted module.
-#     Uses ScriptedLoadableModuleTest base class, available at:
-#     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-#     """
-
-#     def setUp(self):
-#         """Do whatever is needed to reset the state - typically a scene clear will be enough."""
-#         slicer.mrmlScene.Clear()
-
-#     def runTest(self):
-#         """Run as few or as many tests as needed here."""
-#         self.setUp()
-#         self.test_MyFirstModule1()
-
-#     def test_MyFirstModule1(self):
-#         """Ideally you should have several levels of tests.  At the lowest level
-#         tests should exercise the functionality of the logic with different inputs
-#         (both valid and invalid).  At higher levels your tests should emulate the
-#         way the user would interact with your code and confirm that it still works
-#         the way you intended.
-#         One of the most important features of the tests is that it should alert other
-#         developers when their changes will have an impact on the behavior of your
-#         module.  For example, if a developer removes a feature that you depend on,
-#         your test should break so they know that the feature is needed.
-#         """
-
-#         self.delayDisplay("Starting the test")
-
-#         # Get/create input data
-
-#         import SampleData
-
-#         registerSampleData()
-#         inputVolume = SampleData.downloadSample("MyFirstModule1")
-#         self.delayDisplay("Loaded test data set")
-
-#         inputScalarRange = inputVolume.GetImageData().GetScalarRange()
-#         self.assertEqual(inputScalarRange[0], 0)
-#         self.assertEqual(inputScalarRange[1], 695)
-
-#         outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-#         threshold = 100
-
-#         # Test the module logic
-
-#         logic = BoneMatLogic()
-
-#         # Test algorithm with non-inverted threshold
-#         logic.process(inputVolume, outputVolume, threshold, True)
-#         outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-#         self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-#         self.assertEqual(outputScalarRange[1], threshold)
-
-#         # Test algorithm with inverted threshold
-#         logic.process(inputVolume, outputVolume, threshold, False)
-#         outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-#         self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-#         self.assertEqual(outputScalarRange[1], inputScalarRange[1])
-
-#         self.delayDisplay("Test passed")
