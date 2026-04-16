@@ -11,7 +11,7 @@ __all__ = ['vtk_data','linear_tet','quad_tet','linear_wedge','linear_hex','part'
 # Import modules
 #-------------------------------------------------------------------------------
 from numpy.linalg import det
-from numpy import mean, arange, array#, matrix,
+from numpy import mean, arange, array
 from copy import deepcopy
 from bisect import bisect_left, bisect_right
 #from itertools import product

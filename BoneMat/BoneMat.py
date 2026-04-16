@@ -1157,8 +1157,11 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             points.append(ugrid.GetPoint(i))
 
         cells = []
+        # mesh was checked for homogeneity in 'process' 
+        numPts = ugrid.GetCell(0).GetNumberOfPoints()
         for i in range(ugrid.GetNumberOfCells()):
-            pointIds = [ugrid.GetCell(i).GetPointIds().GetId(j) for j in range(4)]
+            cell = ugrid.GetCell(i)
+            pointIds = [cell.GetPointIds().GetId(j) for j in range(numPts)]
             cells.append([i] + pointIds)
 
         cellName = ''

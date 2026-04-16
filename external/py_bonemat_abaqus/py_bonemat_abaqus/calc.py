@@ -11,33 +11,13 @@ __all__ = ['calc_mat_props']
 # Import modules
 #-------------------------------------------------------------------------------
 import numpy as np
-from numpy import mean, arange, digitize, array
-from copy import deepcopy
-from py_bonemat_abaqus.classes import vtk_data
-import sys
+from numpy import mean, array
 from bisect import bisect_right
 from operator import itemgetter
 
 #-------------------------------------------------------------------------------
 # Functions for calculating material data
 #-------------------------------------------------------------------------------
-def calc_mat_props(part, param, vtk):
-    """ Find material properties of each part """
-    
-    # first check that elements are all within CT volume
-    _check_elements_in_CT(part, vtk)
-
-    # calculate the material properties
-    part = _assign_mat_props(part, param, vtk)
-
-    # group modulus values
-    part.moduli = _limit_num_materials(part.moduli, 
-                                        param['gapValue'], 
-                                        param['minVal'], 
-                                        param['groupingDensity'])
-
-    return part
-    
 def _assign_mat_props(part, param, vtk, progressBar):
     """ Find material properties of each element """
     
@@ -227,55 +207,12 @@ def _define_equations(param):
     else:
         IOError("Error: " + param['numEparam'] + " is not a valid input for numCTparam.  Must be 'single' or 'triple'")       
 
-    return rhoQCT, rhoAsh, modulus
-
-def _identify_voxels_in_tets(part, vtk):
-    """ Iterate through each element and identifies voxels within """
-    
-    voxels = []
-    for e in part.elements:
-        voxels.append(vtk.get_voxels(e))
-        
-    return voxels     
+    return rhoQCT, rhoAsh, modulus 
     
 #-------------------------------------------------------------------------------
 # Functions for grouping modulus values
-#-------------------------------------------------------------------------------    
-def _refine_materials(parts, param):
-    """ Group the materials into bins separated by the gapValue parameter """
+#-------------------------------------------------------------------------------      
 
-    # limit the moduli values for each part
-    for p in range(len(parts)):
-        if parts[p].ignore != True:
-            parts[p].moduli = _limit_num_materials(parts[p].moduli, 
-                                                   param['gapValue'], 
-                                                   param['minVal'], 
-                                                   param['groupingDensity'])
-
-    return parts
-    
-def _get_all_modulus_values(parts):
-    """ Create list of all modulus values for all parts in model """
-    
-    moduli = []
-    for p in parts:
-        if p.ignore != True:
-            moduli.extend(p.moduli)
-
-    return moduli    
-    
-def _get_mod_intervals(moduli, max_materials):
-    """ Find the refined moduli values """
-
-    min_mod = float(min(moduli))
-    max_mod = float(max(moduli))
-    if len(set(moduli)) < max_materials:
-        mod_interval = 0.0
-    else:
-        mod_interval = (max_mod - min_mod) / float(max_materials)
-
-    return mod_interval
-    
 def _limit_num_materials(moduli, gapValue, minVal, groupingDensity):
     """ Groups the moduli into bins and calculates the max/mean for each """
     
