@@ -828,41 +828,55 @@
        </widget>
       </item>
       <item row="3" column="0">
+       <widget class="QLabel" name="label_14">
+        <property name="text">
+         <string>Integration steps: </string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QSpinBox" name="numIntegrationStepsSpinBox">
+        <property name="SlicerParameterName" stdset="0">
+         <string>numIntegrationSteps</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
        <widget class="QLabel" name="label_15">
         <property name="text">
          <string>Gap value: </string>
         </property>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="4" column="1">
        <widget class="QSpinBox" name="gapValueSpinBox">
         <property name="SlicerParameterName" stdset="0">
          <string>gapValue</string>
         </property>
        </widget>
       </item>
-      <item row="4" column="0">
+      <item row="5" column="0">
        <widget class="QLabel" name="label_16">
         <property name="text">
          <string>CT padding voxel depth: </string>
         </property>
        </widget>
       </item>
-      <item row="4" column="1">
+      <item row="5" column="1">
        <widget class="QSpinBox" name="ctPadDepthSpinBox">
         <property name="SlicerParameterName" stdset="0">
          <string>ctPadDepth</string>
         </property>
        </widget>
       </item>
-      <item row="5" column="0">
+      <item row="6" column="0">
        <widget class="QLabel" name="label_17">
         <property name="text">
          <string>CT padding default value (HU): </string>
         </property>
        </widget>
       </item>
-      <item row="5" column="1">
+      <item row="6" column="1">
        <widget class="QSpinBox" name="ctPadValueSpinBox">
         <property name="SlicerParameterName" stdset="0">
          <string>ctPadValue</string>
@@ -890,6 +904,16 @@
       <string>Apply</string>
      </property>
     </widget>
+   </item>
+   <item>
+    <widget class="QProgressBar" name="progressBar">
+     <property name="value">
+      <number>24</number>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="processLog"/>
    </item>
    <item>
     <spacer name="verticalSpacer">
