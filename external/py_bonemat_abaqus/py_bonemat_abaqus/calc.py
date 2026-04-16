@@ -38,11 +38,14 @@ def calc_mat_props(part, param, vtk):
 
     return part
     
-def _assign_mat_props(part, param, vtk):
+def _assign_mat_props(part, param, vtk, progressBar):
     """ Find material properties of each element """
     
     # define equations from parameters file
-    rhoQCT_equ, rhoAsh_equ, modulus_equ = _define_equations(param)    
+    rhoQCT_equ, rhoAsh_equ, modulus_equ = _define_equations(param)
+
+    progressIndexes = np.linspace(0, len(part.elements) - 1, 100, dtype=int)
+    moduli = []
 
     # if V1
     if param['integration'] == None:
@@ -50,44 +53,55 @@ def _assign_mat_props(part, param, vtk):
         if part.ele_type != 'linear_tet':
             raise IOError('Version 1 will only work with linear tets, modify parameters file')
             
-        # find voxels
-        voxels = _identify_voxels_in_tets(part, vtk)        
-        
-        # calculate the mean intensity for each element
-        mean_hu = [mean([vtk.lookup[i] for i in v]) for v in voxels]
-        
-        # apply equations to calculate the moduli
-        modulus = [_apply_equations(hu, 
-                                    rhoQCT_equ, 
-                                    rhoAsh_equ, 
-                                    modulus_equ) for hu in mean_hu]      
+        for i, e in enumerate(part.elements):
+            # update progress bar
+            matches = np.where(progressIndexes == i)[0]
+            if len(matches) > 0:
+                progressBar.setValue(matches[-1] + 1)
 
-        # save
-        part = _save_modulus(part, modulus)
+            # find voxels
+            voxels = vtk.get_voxels(e)
+            
+            # calculate the mean intensity for the element
+            mean_hu = mean([vtk.lookup[i] for i in voxels])
+            
+            # apply equations to calculate the modulus
+            modulus = _apply_equations(mean_hu, rhoQCT_equ, rhoAsh_equ, modulus_equ)
+            moduli.append(modulus)
 
     # if V2
     if param['integration'] == 'HU':
-        # find scalar for each element        
-        HU_data = [e.integral(param['intSteps'], vtk) for e in part.elements]
-                        
-        # calculate the modulus values
-        moduli = [_apply_equations(hu, rhoQCT_equ, rhoAsh_equ, modulus_equ) for hu in HU_data]
-			        
-        # save
-        part = _save_modulus(part, moduli)
+        for i, e in enumerate(part.elements):
+            # update progress bar
+            matches = np.where(progressIndexes == i)[0]
+            if len(matches) > 0:
+                progressBar.setValue(matches[-1] + 1)
+
+            # find scalar through integration       
+            hu = e.integral(param['intSteps'], vtk)
+                            
+            # calculate the modulus value
+            modulus = _apply_equations(hu, rhoQCT_equ, rhoAsh_equ, modulus_equ)
+            moduli.append(modulus)
 
     # if V3
     if param['integration'] == 'E':
+        for i, e in enumerate(part.elements):
+            # update progress bar
+            matches = np.where(progressIndexes == i)[0]
+            if len(matches) > 0:
+                progressBar.setValue(matches[-1] + 1)
 
-        # find modulus for each element
-        moduli = [e.integral(param['intSteps'], 
-                             vtk, 
-                             rhoQCT_equ, 
-                             rhoAsh_equ, 
-                             modulus_equ) for e in part.elements]
+            # find modulus for the element
+            modulus = e.integral(param['intSteps'], 
+                                  vtk, 
+                                  rhoQCT_equ, 
+                                  rhoAsh_equ, 
+                                  modulus_equ)
+            moduli.append(modulus)
 
-        # save
-        part = _save_modulus(part, moduli)
+    # save
+    part = _save_modulus(part, moduli)
 
     return part
 

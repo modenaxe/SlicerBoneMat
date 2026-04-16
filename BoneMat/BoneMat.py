@@ -1,7 +1,7 @@
 import os
 import sys
-import re
 import math
+import time
 from typing import Optional
 from __main__ import qt
 
@@ -10,7 +10,6 @@ from vtk.util import numpy_support
 from vtkmodules.vtkFiltersVerdict import vtkMeshQuality
 import numpy as np
 import json
-import tempfile
 import importlib
 from pathlib import Path
 
@@ -49,7 +48,7 @@ configurePyBonematImports(__file__)
 
 from py_bonemat_abaqus.data_import import _checkParamInformation, _create_part
 from py_bonemat_abaqus.classes import part, vtk_data
-from py_bonemat_abaqus.calc import calc_mat_props
+from py_bonemat_abaqus.calc import _check_elements_in_CT, _assign_mat_props, _limit_num_materials
     
 #
 # BoneMat
@@ -136,6 +135,8 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic = None
         self._parameterNode = None
         self._parameterNodeGuiTag = None
+        self._plots = {}
+        self._meshStats = {}
 
     def setup(self) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
@@ -156,68 +157,18 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # in batch mode, without a graphical user interface.
         self.logic = BoneMatLogic()
 
-        # Setup input mesh statistics options
-        self.ui.inputMeshStatSelector.addItem('Element volume', 'vol')
-        self.ui.inputMeshStatSelector.addItem('Tetrahedron quality', 'tet_quality')
-        self.ui.inputMeshStatSelector.addItem('Maximum element edge length', 'max_edge')
-        self.ui.inputMeshStatSelector.addItem('Minimum element edge length', 'min_edge')
-
-        # Setup download formats
-        self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
-        self.ui.downloadFormatSelector.addItem('FEBio (.feb)', '.feb')
-        self.ui.downloadFormatSelector.addItem('Abaqus (.inp)', '.inp')
-        self.ui.downloadFormatSelector.addItem('Ansys (.cdb)', '.cdb')
-        self.ui.downloadFormatSelector.setCurrentIndex(0)
-
-        # Setup algorithm choices
-        self.ui.algoSelector.addItem('HU averaging (Bonemat v1)', 'None')
-        self.ui.algoSelector.addItem('HU integration (Bonemat v2)', 'HU')
-        self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
-        self.ui.algoSelector.setCurrentIndex(2)
-
-        # Connections
-
-        # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
-
-        # Combo Boxes
-        self.ui.inputVolMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onInputMeshSelection)
-        self.ui.inputMeshStatSelector.connect("currentIndexChanged(int)", self.onMeshStatSelection)
-        self.ui.presetSelector.connect("currentIndexChanged(int)", self.onPresetSelection)
-
-        # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
-        self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadButton)
-        self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
-        self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
-        self.ui.calcMeshStatsButton.connect("clicked(bool)", self.onCalcMeshStatsButton)
-
-        # Checkboxes
-        self.ui.phantomCalibrationCheckBox.connect("clicked(bool)", self.onPhantomCheckBox)
-
-        # Phantom calibration table
-        self.ui.phantomCalibrationTableWidget.connect("cellChanged(int,int)", self.onPhantomCellChange)
-
-        # Adjusting the UI of the phantom calibration table
-        table = self.ui.phantomCalibrationTableWidget
-        table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
-
-        height = table.horizontalHeader().height
-        for row in range(table.rowCount):
-            height += table.rowHeight(row)
-        height += table.frameWidth * 2
-        table.setFixedHeight(height)
-
-        # Phantom calibration is initially inactive
-        self.ui.phantomCalibrationTableWidget.enabled = False
-
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
 
-        self.ui.inputMeshStatSelector.setCurrentIndex(0)
+        # setup various UI elements
+        self.setupConnections()
+        self.setupDropdowns()
+        self.setupPhantomTable()
+        self.setupProgressLog()
 
+        # setting default values
         self.setBoneDensityPresetValues()
+        self.setDefaultValues()
 
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
@@ -272,21 +223,6 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self.setParameterNode(self.logic.getParameterNode())
 
-        # Default values for some options
-        with slicer.util.NodeModify(self._parameterNode):
-            self._parameterNode.meshNodes = '0'
-            self._parameterNode.meshElements = '0'
-            self._parameterNode.meshMinStat = '0'
-            self._parameterNode.meshMaxStat = '0'
-            self._parameterNode.meshAvgStat = '0'
-
-            self._parameterNode.minModulus = 10
-            self._parameterNode.numIntegrationSteps = 3
-            self._parameterNode.poissonValue = 0.35
-            self._parameterNode.gapValue = 200
-            self._parameterNode.ctPadDepth = 1
-            self._parameterNode.ctPadValue = -1000
-
     def setParameterNode(self, inputParameterNode: Optional[BoneMatParameterNode]) -> None:
         """
         Set and observe parameter node.
@@ -304,13 +240,70 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
             self._checkCanApply()
 
-    def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputCT and self._parameterNode.inputVolMesh and self._parameterNode.outputVolMesh:
-            self.ui.applyButton.toolTip = _("Commence material property assignment")
-            self.ui.applyButton.enabled = True
-        else:
-            self.ui.applyButton.toolTip = _("Select input CT, input mesh and output mesh")
-            self.ui.applyButton.enabled = False
+    def setupConnections(self) -> None:
+        # These connections ensure that we update parameter node when scene is closed
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+
+        # Combo Boxes
+        self.ui.inputVolMeshSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onInputMeshSelection)
+        self.ui.inputMeshStatSelector.connect("currentIndexChanged(int)", self.onMeshStatSelection)
+        self.ui.presetSelector.connect("currentIndexChanged(int)", self.onPresetSelection)
+
+        # Buttons
+        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.ui.downloadVTKButton.connect("clicked(bool)", self.onDownloadButton)
+        self.ui.savePresetButton.connect("clicked(bool)", self.onSavePresetButton)
+        self.ui.deletePresetButton.connect("clicked(bool)", self.onDeletePresetButton)
+        self.ui.calcMeshStatsButton.connect("clicked(bool)", self.onCalcMeshStatsButton)
+
+        # Checkboxes
+        self.ui.phantomCalibrationCheckBox.connect("clicked(bool)", self.onPhantomCheckBox)
+
+        # Phantom calibration table
+        self.ui.phantomCalibrationTableWidget.connect("cellChanged(int,int)", self.onPhantomCellChange)
+
+    def setupDropdowns(self) -> None:
+        # Setup input mesh statistics options
+        self.ui.inputMeshStatSelector.addItem('Element volume', 'vol')
+        self.ui.inputMeshStatSelector.addItem('Tetrahedron quality', 'tet_quality')
+        self.ui.inputMeshStatSelector.addItem('Maximum element edge length', 'max_edge')
+        self.ui.inputMeshStatSelector.addItem('Minimum element edge length', 'min_edge')
+        self.ui.inputMeshStatSelector.setCurrentIndex(0)
+
+        # Setup download formats
+        self.ui.downloadFormatSelector.addItem('VTK', '.vtk')
+        self.ui.downloadFormatSelector.addItem('FEBio (.feb)', '.feb')
+        self.ui.downloadFormatSelector.addItem('Abaqus (.inp)', '.inp')
+        self.ui.downloadFormatSelector.addItem('Ansys (.cdb)', '.cdb')
+        self.ui.downloadFormatSelector.setCurrentIndex(0)
+
+        # Setup algorithm choices
+        self.ui.algoSelector.addItem('HU averaging (Bonemat v1)', None)
+        self.ui.algoSelector.addItem('HU integration (Bonemat v2)', 'HU')
+        self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
+        self.ui.algoSelector.setCurrentIndex(2)
+
+    def setupPhantomTable(self) -> None:
+        # Adjusting the UI of the phantom calibration table
+        table = self.ui.phantomCalibrationTableWidget
+        table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
+
+        height = table.horizontalHeader().height
+        for row in range(table.rowCount):
+            height += table.rowHeight(row)
+        height += table.frameWidth * 2
+        table.setFixedHeight(height)
+
+        # Phantom calibration is initially inactive
+        self.ui.phantomCalibrationTableWidget.enabled = False
+
+    def setupProgressLog(self) -> None:
+        self.ui.progressBar.hide()
+
+        log = self.ui.processLog
+        log.setFixedHeight(80)
+        log.setReadOnly(True)
 
     def setBoneDensityPresetValues(self) -> None:
         settings = qt.QSettings()
@@ -343,6 +336,30 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if index == -1:
             index = self.ui.presetSelector.findText('None')
         self.ui.presetSelector.setCurrentIndex(index)
+
+    def setDefaultValues(self) -> None:
+        # Default values for some options
+        with slicer.util.NodeModify(self._parameterNode):
+            self._parameterNode.meshNodes = '0'
+            self._parameterNode.meshElements = '0'
+            self._parameterNode.meshMinStat = '0'
+            self._parameterNode.meshMaxStat = '0'
+            self._parameterNode.meshAvgStat = '0'
+
+            self._parameterNode.minModulus = 10
+            self._parameterNode.numIntegrationSteps = 3
+            self._parameterNode.poissonValue = 0.35
+            self._parameterNode.gapValue = 200
+            self._parameterNode.ctPadDepth = 1
+            self._parameterNode.ctPadValue = -1000
+
+    def _checkCanApply(self, caller=None, event=None) -> None:
+        if self._parameterNode and self._parameterNode.inputCT and self._parameterNode.inputVolMesh and self._parameterNode.outputVolMesh:
+            self.ui.applyButton.toolTip = _("Commence material property assignment")
+            self.ui.applyButton.enabled = True
+        else:
+            self.ui.applyButton.toolTip = _("Select input CT, input mesh and output mesh")
+            self.ui.applyButton.enabled = False
 
     def onPresetSelection(self) -> None:
         values = self.ui.presetSelector.currentData
@@ -381,8 +398,12 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.inputMeshStatsPlotView.setMinimumHeight(0)
 
     def onCalcMeshStatsButton(self) -> None:
+        self.ui.processLog.clear()
+        self.appendLog('Calculating input mesh statistics...')
+
         mesh = self._parameterNode.inputVolMesh
         if mesh is None:
+            self.appendLog('ERROR: no input mesh selected.')
             return
         
         self.ui.calcMeshStatsButton.enabled = False
@@ -450,6 +471,8 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.createMeshStatsPlots(volume, tetQuality, minEdge, maxEdge)
 
         self.onMeshStatSelection()
+
+        self.appendLog('Mesh statistics calculated.')
 
     def createMeshStatsPlots(self, volume, tetQuality, minEdge, maxEdge) -> None:
         volumeTable = self.createMeshStatTable(volume)
@@ -678,14 +701,20 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def onApplyButton(self) -> None:
         """Run processing when user clicks "Apply" button."""
-        with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(
-                self._parameterNode.inputCT,
-                self._parameterNode.inputVolMesh,
-                self._parameterNode.outputVolMesh,
-                self.ui.algoSelector.currentData
-            )
+        try:
+            self.ui.processLog.clear()
+            self.appendLog('Starting material assignment procedure.')
+
+            start = time.time()
+            self.logic.process(self._parameterNode.inputCT,
+                                self._parameterNode.inputVolMesh,
+                                self._parameterNode.outputVolMesh,
+                                self.ui.algoSelector.currentData,
+                                self.ui.progressBar)
+
+            self.appendLog(f'Material assignment complete.\nElapsed time (seconds): {time.time() - start}')
+        except Exception as e:
+            self.appendLog(f"ERROR: {e}")
 
     def exportAbaqusMesh(self, ugrid, filePath) -> None:
         lines = [
@@ -718,8 +747,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
         if vtkModuli is None:
-            slicer.util.errorDisplay('Output model has no attached Young\'s Modulus data')
-            return
+            raise Exception('Output model has no attached Young\'s Modulus data')
         
         moduli = numpy_support.vtk_to_numpy(vtkModuli)
         modSet = np.sort(np.unique(moduli))
@@ -763,8 +791,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
         if vtkModuli is None:
-            slicer.util.errorDisplay('Output model has no attached Young\'s Modulus data')
-            return
+            raise Exception('Output model has no attached Young\'s Modulus data')
         
         moduli = numpy_support.vtk_to_numpy(vtkModuli)
         modSet = np.sort(np.unique(moduli))
@@ -846,7 +873,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         vtkModuli = ugrid.GetCellData().GetAbstractArray('YoungsModulus')
         if vtkModuli is None:
-            slicer.util.errorDisplay('Output model has no attached Young\'s Modulus data')
+            raise Exception('Output model has no attached Young\'s Modulus data')
             return
 
         moduli = numpy_support.vtk_to_numpy(vtkModuli)
@@ -881,7 +908,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def onDownloadButton(self) -> None:
         outputModel = self._parameterNode.outputVolMesh
         if not outputModel:
-            slicer.util.errorDisplay('No output model available to export')
+            self.appendLog('ERROR: No output model available to export')
             return
         
         format = self.ui.downloadFormatSelector.currentText
@@ -914,9 +941,9 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             elif downloadExt == '.cdb':
                 self.exportAnsysMesh(outputModel.GetUnstructuredGrid(), filePath)
             
-            slicer.util.infoDisplay(f"Mesh saved to: {filePath}")
+            self.appendLog(f"Mesh saved to: {filePath}")
         except Exception as e:
-            slicer.util.errorDisplay(f"Failed to save mesh: {e}")
+            self.appendLog(f"ERROR: Failed to save mesh: {e}")
 
     def onPhantomCheckBox(self, checked) -> None:
         if checked:
@@ -947,6 +974,13 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self.ui.ctDensitySlopeSpinBox.value = slope / 1000
         self.ui.ctDensityInterceptSpinBox.value = intercept / 1000
+
+    def appendLog(self, errMsg) -> None:
+        log = self.ui.processLog
+        log.appendPlainText(errMsg)
+
+        scrollbar = log.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum)
 
 #
 # BoneMatLogic
@@ -1031,6 +1065,10 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         img = volNode.GetImageData()
         if img is None:
             raise ValueError("Volume node has no image data")
+        
+        padDepth = self.getParameterNode().ctPadDepth
+        if padDepth < 0:
+            raise Exception('CT padding voxel depth must be >= 0')
 
         nx, ny, nz = img.GetDimensions()
 
@@ -1050,8 +1088,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         # Add extra coordinates at the front and back for padding later
         # assumes CT data is larger than a single voxel
-        padDepth = max(0, self.getParameterNode().ctPadDepth)
-
         xDiff = xs[1] - xs[0]
         leftXPadding = xs[0] - xDiff * np.arange(padDepth, 0, -1)
         rightXPadding = xs[nx - 1] + xDiff * np.arange(1, padDepth + 1)
@@ -1083,9 +1119,9 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         # Copy scalars from image data to rectilinear grid point data
         scalars = img.GetPointData().GetScalars()
         if scalars is None:
-            raise ValueError("CT image data has no point scalars")
+            raise Exception("CT image data has no point scalars (i.e. HU data)")
         if scalars.GetNumberOfTuples() != nx * ny * nz:
-            raise ValueError("Scalar tuple count does not match volume dimensions")
+            raise Exception("CT image data count does not match volume dimensions")
 
         newScalars = self.reorderedPaddedScalars(img, flipX, flipY, flipZ)
 
@@ -1100,7 +1136,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             'intSteps': paraNode.numIntegrationSteps,
             'rhoQCTa': paraNode.ctDensityIntercept,
             'rhoQCTb': paraNode.ctDensitySlope,
-            'calibrationCorrect': 'True',
+            'calibrationCorrect': True,
             'numCTparam': 'single',
             'rhoAsha1': paraNode.ashDensityOffset / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
             'rhoAshb1': 1 / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
@@ -1143,29 +1179,34 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         return _create_part('input_mesh', cells, cellName, cellType, points)
 
-    def process(self, inputCT, inputMesh, outputMesh, algorithm):
+    def process(self, inputCT, inputMesh, outputMesh, algorithm, progressBar):
         """
         Assign material properties to output volumetric mesh from input CT data
         """
         ugrid = inputMesh.GetUnstructuredGrid()
         if not ugrid:
-            slicer.util.errorDisplay('Input mesh must be volumetric, not a surface')
-            return
+            raise Exception('Input mesh must be volumetric, not a surface')
         
         cellTypes = vtk.vtkCellTypes()
         ugrid.GetCellTypes(cellTypes)
         if cellTypes.GetNumberOfTypes() > 1:
-            slicer.util.errorDisplay('Input mesh must be homogenous (i.e. all elements are the same type)')
-            return
+            raise Exception('Input mesh must be homogenous (i.e. all elements are the same type)')
         if cellTypes.GetCellType(0) not in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA, vtk.VTK_WEDGE, vtk.VTK_HEXAHEDRON]:
-            slicer.util.errorDisplay('Input mesh elements must be linear tet, quadratic tet, linear wedge or linear hex elements')
-            return
+            raise Exception('Input mesh elements must be linear tet, quadratic tet, linear wedge or linear hex elements')
 
         params = self.getParams(algorithm)
         meshPart = self.getMeshPart(ugrid)
         vtkCT = self.getVtkCTData(inputCT)
 
-        mappedMeshPart = calc_mat_props(meshPart, params, vtkCT)
+        progressBar.setValue(0)
+        progressBar.show()
+
+        _check_elements_in_CT(meshPart, vtkCT)
+        mappedMeshPart = _assign_mat_props(meshPart, params, vtkCT, progressBar)
+        mappedMeshPart.moduli = _limit_num_materials(mappedMeshPart.moduli, 
+                                                      params['gapValue'], 
+                                                      params['minVal'], 
+                                                      params['groupingDensity'])
 
         numCells = ugrid.GetNumberOfCells()
         moduli = vtk.vtkDoubleArray()
@@ -1175,6 +1216,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         for cellId in range(numCells):
             moduli.SetValue(cellId, mappedMeshPart.moduli[cellId])
+
+        progressBar.hide()
 
         cellData = ugrid.GetCellData()
         if cellData.GetAbstractArray('YoungsModulus') is not None:
