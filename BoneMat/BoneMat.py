@@ -27,22 +27,7 @@ from slicer import (
     vtkMRMLScalarVolumeNode,
     vtkMRMLModelNode
 )
-
-def ensureLocalPackage(importName, installPath=None):
-    try:
-        return importlib.import_module(importName)
-    except ModuleNotFoundError:
-        if installPath:
-            slicer.util.pip_install(installPath)
-        else:
-            slicer.util.pip_install(f"\"{importName}\"")
-        importlib.invalidate_caches()
-        return importlib.import_module(importName)
-    
-ensureLocalPackage('meshio')
-
-import meshio
-    
+        
 def configurePyBonematImports(module_file):
     project_root = os.path.abspath(os.path.join(os.path.dirname(module_file), ".."))
     bonemat_repo_root = os.path.join(project_root, "external/py_bonemat_abaqus")
@@ -59,6 +44,12 @@ def configurePyBonematImports(module_file):
         del sys.modules["py_bonemat_abaqus"]
 
     importlib.invalidate_caches()
+
+configurePyBonematImports(__file__)
+
+from py_bonemat_abaqus.data_import import _checkParamInformation, _create_part
+from py_bonemat_abaqus.classes import part, vtk_data
+from py_bonemat_abaqus.calc import calc_mat_props
     
 #
 # BoneMat
@@ -122,6 +113,7 @@ class BoneMatParameterNode:
 
     valuesPreset: str
     minModulus: float
+    numIntegrationSteps: int
     poissonValue: float
     gapValue: int
     ctPadDepth: int
@@ -289,6 +281,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self._parameterNode.meshAvgStat = '0'
 
             self._parameterNode.minModulus = 10
+            self._parameterNode.numIntegrationSteps = 3
             self._parameterNode.poissonValue = 0.35
             self._parameterNode.gapValue = 200
             self._parameterNode.ctPadDepth = 1
@@ -1001,50 +994,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         legendNode.SetSize(0.1, 0.5)
 
         mesh.SetDisplayVisibility(True)
-
-    def adjustAbaqusInput(self, in_path, out_path = None) -> str:
-        """
-        Fixes meshio ABAQUS output to match py_bonemat_abaqus expected format
-        """
-
-        in_path = str(in_path)
-        out_path = str(out_path) if out_path else in_path
-
-        lines = Path(in_path).read_text(encoding="utf-8", errors="replace").splitlines(True)
-
-        out_lines = []
-        inserted_part = False
-
-        heading_re = re.compile(r"^(\s*)\*HEADING\b")
-        node_re    = re.compile(r"^(\s*)\*NODE\b")
-        elem_re    = re.compile(r"^(\s*)\*ELEMENT\s*,\s*TYPE\s*=", re.IGNORECASE)
-
-        # py_bonemat_abaqus is strict about capitalisation, so we need multiple fixes
-        for line in lines:
-            # Replace *HEADING -> *Heading
-            line = heading_re.sub(r"\1*Heading", line)
-
-            # Insert *Part,name=model on the line before the first *NODE line
-            if (not inserted_part) and node_re.match(line):
-                indent = node_re.match(line).group(1)
-                out_lines.append(f"{indent}*Part,name=model\n")
-                inserted_part = True
-
-            # Replace *NODE -> *Node
-            line = node_re.sub(r"\1*Node", line)
-
-            # Replace *ELEMENT, TYPE= -> *Element,type=
-            line = elem_re.sub(r"\1*Element,type=", line)
-
-            out_lines.append(line)
-
-        # Add *End Part
-        if out_lines and not out_lines[-1].endswith("\n"):
-            out_lines[-1] += "\n"
-        out_lines.append("*End Part\n")
-
-        Path(out_path).write_text("".join(out_lines), encoding="utf-8")
-        return out_path
     
     def reorderedPaddedScalars(self, img, flipX, flipY, flipZ):
         nx, ny, nz = img.GetDimensions()
@@ -1070,18 +1019,9 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         else:
             paddedVol = vol
 
-        arr2 = np.ascontiguousarray(paddedVol.reshape(-1))
-
-        vtk_arr = numpy_support.numpy_to_vtk(
-            num_array=arr2,
-            deep=True,
-            array_type=scalars.GetDataType()
-        )
-        vtk_arr.SetName(scalars.GetName())
-
-        return vtk_arr
+        return np.ascontiguousarray(paddedVol.reshape(-1))        
     
-    def writeVolumeAsRectilinearGrid(self, volNode, outPath):
+    def getVtkCTData(self, volNode):
         """
         Writes a Slicer vtkMRMLScalarVolumeNode as a legacy VTK RECTILINEAR_GRID ASCII file
         with explicit X_COORDINATES / Y_COORDINATES / Z_COORDINATES and POINT_DATA scalars,
@@ -1107,14 +1047,25 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         xs = np.array([ras_of(i, 0, 0)[0] for i in range(nx)], dtype=np.float64)
         ys = np.array([ras_of(0, j, 0)[1] for j in range(ny)], dtype=np.float64)
         zs = np.array([ras_of(0, 0, k)[2] for k in range(nz)], dtype=np.float64)
+
         # Add extra coordinates at the front and back for padding later
         # assumes CT data is larger than a single voxel
+        padDepth = max(0, self.getParameterNode().ctPadDepth)
+
         xDiff = xs[1] - xs[0]
-        xs = np.concatenate(([xs[0] - xDiff], xs, [xs[nx - 1] + xDiff]))
+        leftXPadding = xs[0] - xDiff * np.arange(padDepth, 0, -1)
+        rightXPadding = xs[nx - 1] + xDiff * np.arange(1, padDepth + 1)
+        xs = np.concatenate((leftXPadding, xs, rightXPadding))
+
         yDiff = ys[1] - ys[0]
-        ys = np.concatenate(([ys[0] - yDiff], ys, [ys[ny - 1] + yDiff]))
+        leftYPadding = ys[0] - yDiff * np.arange(padDepth, 0, -1)
+        rightYPadding = ys[ny - 1] + yDiff * np.arange(1, padDepth + 1)
+        ys = np.concatenate((leftYPadding, ys, rightYPadding))
+
         zDiff = zs[1] - zs[0]
-        zs = np.concatenate(([zs[0] - zDiff], zs, [zs[nz - 1] + zDiff]))
+        leftZPadding = zs[0] - zDiff * np.arange(padDepth, 0, -1)
+        rightZPadding = zs[nz - 1] + zDiff * np.arange(1, padDepth + 1)
+        zs = np.concatenate((leftZPadding, zs, rightZPadding))
         
         flipX = False
         flipY = False
@@ -1129,32 +1080,6 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
             zs = zs[::-1]
             flipZ = True
 
-        rg = vtk.vtkRectilinearGrid()
-        dimPad = 2 * max(0, self.getParameterNode().ctPadDepth)
-        rg.SetDimensions(nx + dimPad, ny + dimPad, nz + dimPad) # accounts for padding
-
-        xArr = vtk.vtkDoubleArray()
-        xArr.SetName("X_COORDINATES")
-        xArr.SetNumberOfTuples(nx + dimPad)
-        for i, v in enumerate(xs):
-            xArr.SetValue(i, float(v))
-
-        yArr = vtk.vtkDoubleArray()
-        yArr.SetName("Y_COORDINATES")
-        yArr.SetNumberOfTuples(ny + dimPad)
-        for j, v in enumerate(ys):
-            yArr.SetValue(j, float(v))
-
-        zArr = vtk.vtkDoubleArray()
-        zArr.SetName("Z_COORDINATES")
-        zArr.SetNumberOfTuples(nz + dimPad)
-        for k, v in enumerate(zs):
-            zArr.SetValue(k, float(v))
-
-        rg.SetXCoordinates(xArr)
-        rg.SetYCoordinates(yArr)
-        rg.SetZCoordinates(zArr)
-
         # Copy scalars from image data to rectilinear grid point data
         scalars = img.GetPointData().GetScalars()
         if scalars is None:
@@ -1164,95 +1089,83 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         newScalars = self.reorderedPaddedScalars(img, flipX, flipY, flipZ)
 
-        rg.GetPointData().SetScalars(newScalars)
+        return vtk_data(xs, ys, zs, newScalars)
 
-        # Write legacy rectilinear grid
-        w = vtk.vtkRectilinearGridWriter()
-        w.SetFileName(outPath)
-        w.SetInputData(rg)
-        w.SetFileTypeToASCII()
-        w.Write()
+    def getParams(self, algorithm) -> dict:
+        paraNode = self.getParameterNode()
+        params = {
+            'integration': algorithm,
+            'gapValue': float(paraNode.gapValue),
+            'groupingDensity': 'max',
+            'intSteps': paraNode.numIntegrationSteps,
+            'rhoQCTa': paraNode.ctDensityIntercept,
+            'rhoQCTb': paraNode.ctDensitySlope,
+            'calibrationCorrect': 'True',
+            'numCTparam': 'single',
+            'rhoAsha1': paraNode.ashDensityOffset / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
+            'rhoAshb1': 1 / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor),
+            'numEparam': 'single',
+            'Ea1': 0.0,
+            'Eb1': paraNode.modulusScale,
+            'Ec1': paraNode.modulusExponent,
+            'minVal': paraNode.minModulus,
+            'poisson': paraNode.poissonValue
+        }
+        _checkParamInformation(params)
 
-        # Add cell data field to file to satisfy py_bonemat_abaqus requirements
-        path = Path(outPath)
-        lines = path.read_text(encoding="utf-8").splitlines(True)
-        nCells = (nx + dimPad - 1) * (ny + dimPad - 1) * (nz + dimPad - 1)
-        # Find POINT_DATA line and insert CELL_DATA before it
-        for i, line in enumerate(lines):
-            if line.strip().startswith("POINT_DATA"):
-                lines.insert(i, f"CELL_DATA {nCells}\n")
-                break
+        return params
 
-        path.write_text("".join(lines), encoding="utf-8")
-        
+    def getMeshPart(self, ugrid) -> part:
+        points = []
+        for i in range(ugrid.GetNumberOfPoints()):
+            points.append(ugrid.GetPoint(i))
+
+        cells = []
+        for i in range(ugrid.GetNumberOfCells()):
+            pointIds = [ugrid.GetCell(i).GetPointIds().GetId(j) for j in range(4)]
+            cells.append([i] + pointIds)
+
+        cellName = ''
+        cellType = ''
+        vtkCellType = ugrid.GetCell(0).GetCellType()
+        if vtkCellType == vtk.VTK_TETRA:
+            cellName = 'C3D4'
+            cellType = 'linear_tet'
+        elif vtkCellType == vtk.VTK_QUADRATIC_TETRA:
+            cellName = 'C3D10'
+            cellType = 'quad_tet'
+        elif vtkCellType == vtk.VTK_WEDGE:
+            cellName = 'C3D6'
+            cellType = 'linear_wedge'
+        elif vtkCellType == vtk.VTK_HEXAHEDRON:
+            cellName = 'C3D8'
+            cellType = 'linear_hex'
+
+        return _create_part('input_mesh', cells, cellName, cellType, points)
 
     def process(self, inputCT, inputMesh, outputMesh, algorithm):
         """
         Assign material properties to output volumetric mesh from input CT data
         """
-        if not inputMesh.GetUnstructuredGrid():
+        ugrid = inputMesh.GetUnstructuredGrid()
+        if not ugrid:
             slicer.util.errorDisplay('Input mesh must be volumetric, not a surface')
             return
         
-        configurePyBonematImports(__file__)
+        cellTypes = vtk.vtkCellTypes()
+        ugrid.GetCellTypes(cellTypes)
+        if cellTypes.GetNumberOfTypes() > 1:
+            slicer.util.errorDisplay('Input mesh must be homogenous (i.e. all elements are the same type)')
+            return
+        if cellTypes.GetCellType(0) not in [vtk.VTK_TETRA, vtk.VTK_QUADRATIC_TETRA, vtk.VTK_WEDGE, vtk.VTK_HEXAHEDRON]:
+            slicer.util.errorDisplay('Input mesh elements must be linear tet, quadratic tet, linear wedge or linear hex elements')
+            return
 
-        from py_bonemat_abaqus.run import run as pyBonematAbaqusRun
+        params = self.getParams(algorithm)
+        meshPart = self.getMeshPart(ugrid)
+        vtkCT = self.getVtkCTData(inputCT)
 
-        with tempfile.TemporaryDirectory(prefix='slicer_tmp_') as tmpdir:
-            ctPath = os.path.join(tmpdir, 'ct.vtk')
-            paramsPath = os.path.join(tmpdir, 'params.txt')
-            meshPath = os.path.join(tmpdir, 'mesh.vtk')
-            abaqusMeshPath = os.path.join(tmpdir, 'abaqus_mesh.inp')
-            mappedAbaqusMeshPath = os.path.join(tmpdir, 'abaqus_meshMAT.inp')
-            mappedMeshPath = os.path.join(tmpdir, 'mapped_mesh.vtk')
-
-            ugridWriter = vtk.vtkUnstructuredGridWriter()
-            ugridWriter.SetFileName(meshPath)
-            ugridWriter.SetInputData(inputMesh.GetUnstructuredGrid())
-            ugridWriter.SetFileTypeToASCII()
-            ugridWriter.Write()
-
-            preAbaqusMesh = meshio.read(meshPath)
-            preAbaqusMesh.write(abaqusMeshPath)
-
-            self.adjustAbaqusInput(abaqusMeshPath)
-
-            self.writeVolumeAsRectilinearGrid(inputCT, ctPath)
-
-            paraNode = self.getParameterNode()
-            with open(paramsPath, 'w') as params:
-                params.writelines([
-                    'integration = ' + algorithm + '\n',
-                    'gapValue = ' + str(paraNode.gapValue) + '\n',
-                    'groupingDensity = max\n',
-                    'intSteps = 4\n',
-                    'rhoQCTa = ' + str(paraNode.ctDensityIntercept) + '\n',
-                    'rhoQCTb = ' + str(paraNode.ctDensitySlope) + '\n',
-                    'calibrationCorrect = True\n',
-                    'numCTparam = single\n',
-                    'rhoAsha1 = ' + str(paraNode.ashDensityOffset / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor)) + '\n',
-                    'rhoAshb1 =' + str(1 / (paraNode.ashDensityScale * paraNode.apparentDensityDivisor)) + '\n',
-                    'numEparam = single\n',
-                    'Ea1 = 0\n',
-                    'Eb1 = ' + str(paraNode.modulusScale) + '\n',
-                    'Ec1 = ' + str(paraNode.modulusExponent) + '\n',
-                    'minVal = ' + str(paraNode.minModulus) + '\n',
-                    'poisson = ' + str(paraNode.poissonValue)
-                ])
-
-            pyBonematAbaqusRun(paramsPath, ctPath, abaqusMeshPath)
-
-            mappedAbaqusMesh = meshio.read(mappedAbaqusMeshPath)
-            mappedAbaqusMesh.write(mappedMeshPath)
-
-            # read lines to manually assign modulus values
-            with open(mappedAbaqusMeshPath, 'r') as f:
-                lines = f.readlines()
-
-            ugridReader = vtk.vtkUnstructuredGridReader()
-            ugridReader.SetFileName(mappedMeshPath)
-            ugridReader.Update()
-            ugrid = ugridReader.GetOutput()
+        mappedMeshPart = calc_mat_props(meshPart, params, vtkCT)
 
         numCells = ugrid.GetNumberOfCells()
         moduli = vtk.vtkDoubleArray()
@@ -1260,45 +1173,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         moduli.SetNumberOfComponents(1)
         moduli.SetNumberOfTuples(numCells)
 
-        modLookup = []
-        i = 0
-        while i < len(lines):
-            if not lines[i].startswith('*Material'):
-                i += 1
-                continue
-
-            modLine = lines[i+2]
-            mod = float(modLine.strip().split(',')[0])
-            if np.isnan(mod):
-                mod = 15000
-            modLookup.append(mod)
-            i += 3
-
-        modulusValues = [0] * numCells
-        i = 0
-        while i < len(lines):
-            if not lines[i].startswith('*Elset'):
-                i += 1
-                continue
-
-            j = i + 1
-            while not lines[j].startswith('*'):
-                j += 1
-            
-            elementLines = lines[i+1:j]
-            elemIds = []
-            for line in elementLines:
-                elemIds.extend(int(x)-1 for x in line.replace("\n", ",").split(",") if x.strip())
-
-            lookup = int(lines[i].strip().split('_')[-1]) - 1
-            mod = modLookup[lookup]
-            for id in elemIds:
-                modulusValues[id] = mod
-
-            i = j
-
         for cellId in range(numCells):
-            moduli.SetValue(cellId, modulusValues[cellId])
+            moduli.SetValue(cellId, mappedMeshPart.moduli[cellId])
 
         cellData = ugrid.GetCellData()
         if cellData.GetAbstractArray('YoungsModulus') is not None:

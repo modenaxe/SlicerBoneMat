@@ -368,7 +368,7 @@ def _create_part(name, elements, elename, eletype, nodes, transform=[[0.,0.,0]],
     
     # create the part
     new_part = part(name, elename, eletype, transform, ignore)
-    
+
     # add elements to part
     for e in elements:
         pts = [nodes[n] for n in e[1:]]
@@ -388,7 +388,6 @@ def _create_part(name, elements, elename, eletype, nodes, transform=[[0.,0.,0]],
         if eletype == 'linear_hex':
             ele = linear_hex(int(e[0]), pts, e[1:])
         ################################
-        
 
         new_part.add_element(ele)
         

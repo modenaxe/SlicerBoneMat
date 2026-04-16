@@ -21,20 +21,22 @@ from operator import itemgetter
 #-------------------------------------------------------------------------------
 # Functions for calculating material data
 #-------------------------------------------------------------------------------
-def calc_mat_props(parts, param, vtk):
+def calc_mat_props(part, param, vtk):
     """ Find material properties of each part """
     
     # first check that elements are all within CT volume
-    _check_elements_in_CT(parts, vtk)
+    _check_elements_in_CT(part, vtk)
 
     # calculate the material properties
-    for p in range(len(parts)):
-        if parts[p].ignore != True:
-            parts[p] = _assign_mat_props(parts[p], param, vtk)
-    # group modulus values
-    parts = _refine_materials(parts, param)
+    part = _assign_mat_props(part, param, vtk)
 
-    return parts
+    # group modulus values
+    part.moduli = _limit_num_materials(part.moduli, 
+                                        param['gapValue'], 
+                                        param['minVal'], 
+                                        param['groupingDensity'])
+
+    return part
     
 def _assign_mat_props(part, param, vtk):
     """ Find material properties of each element """
@@ -101,34 +103,33 @@ def _save_modulus(part, modulus):
 
     return part
     
-def _check_elements_in_CT(parts, vtk):
-    for p in parts:
-        node_data = array(_get_node_data(p))
-        i,x,y,z = node_data.T
-        if min(x) < min(vtk.x):
-            n_indx = i[x.tolist().index(min(x))]
-            raise ValueError("Error: Node " + repr(int(n_indx)) + " has an x-coordinate of: " + repr(min(x)) + " which is outside the CT volume\n"
-                             "Dataset minimum x value is: " + repr(min(vtk.x)))
-        elif min(y) < min(vtk.y):
-            n_indx = i[y.tolist().index(min(y))]
-            raise ValueError("Error: Node " + repr(int(n_indx)) + " has a y-coordinate of: " + repr(min(y)) + " which is outside the CT volume\n"
-                             "Dataset minimum y value is: " + repr(min(vtk.y)))
-        elif min(z) < min(vtk.z):
-            n_indx = i[z.tolist().index(min(z))]
-            raise ValueError("Error: Node " + repr(int(n_indx)) + " has a z-coordinate of: " + repr(min(z)) + " which is outside the CT volume\n"
-                             "Dataset minimum z value is: " + repr(min(vtk.z)))
-        elif max(x) > max(vtk.x):
-            n_indx = i[x.tolist().index(max(x))]
-            raise ValueError("Error: Node " + repr(int(n_indx)) + " has an x-coordinate of: " + repr(max(x)) + " which is outside the CT volume\n"
-                             "Dataset maximum x value is: " + repr(max(vtk.x)))
-        elif max(y) > max(vtk.y):
-            n_indx = i[y.tolist().index(max(y))]
-            raise ValueError("Error: Node " + repr(int(n_indx)) + " has a y-coordinate of: " + repr(max(y)) + " which is outside the CT volume\n"
-                             "Dataset maximum y value is: " + repr(max(vtk.y)))
-        elif max(z) > max(vtk.z):
-            n_indx = i[z.tolist().index(max(z))]
-            raise ValueError("Error: Node " + repr(int(n_indx)) + " has a z-coordinate of: " + repr(max(z)) + " which is outside the CT volume\n"
-                             "Dataset maximum z value is: " + repr(max(vtk.z)))
+def _check_elements_in_CT(part, vtk):
+    node_data = array(_get_node_data(part))
+    i,x,y,z = node_data.T
+    if min(x) < min(vtk.x):
+        n_indx = i[x.tolist().index(min(x))]
+        raise ValueError("Error: Node " + repr(int(n_indx)) + " has an x-coordinate of: " + repr(min(x)) + " which is outside the CT volume\n"
+                            "Dataset minimum x value is: " + repr(min(vtk.x)))
+    elif min(y) < min(vtk.y):
+        n_indx = i[y.tolist().index(min(y))]
+        raise ValueError("Error: Node " + repr(int(n_indx)) + " has a y-coordinate of: " + repr(min(y)) + " which is outside the CT volume\n"
+                            "Dataset minimum y value is: " + repr(min(vtk.y)))
+    elif min(z) < min(vtk.z):
+        n_indx = i[z.tolist().index(min(z))]
+        raise ValueError("Error: Node " + repr(int(n_indx)) + " has a z-coordinate of: " + repr(min(z)) + " which is outside the CT volume\n"
+                            "Dataset minimum z value is: " + repr(min(vtk.z)))
+    elif max(x) > max(vtk.x):
+        n_indx = i[x.tolist().index(max(x))]
+        raise ValueError("Error: Node " + repr(int(n_indx)) + " has an x-coordinate of: " + repr(max(x)) + " which is outside the CT volume\n"
+                            "Dataset maximum x value is: " + repr(max(vtk.x)))
+    elif max(y) > max(vtk.y):
+        n_indx = i[y.tolist().index(max(y))]
+        raise ValueError("Error: Node " + repr(int(n_indx)) + " has a y-coordinate of: " + repr(max(y)) + " which is outside the CT volume\n"
+                            "Dataset maximum y value is: " + repr(max(vtk.y)))
+    elif max(z) > max(vtk.z):
+        n_indx = i[z.tolist().index(max(z))]
+        raise ValueError("Error: Node " + repr(int(n_indx)) + " has a z-coordinate of: " + repr(max(z)) + " which is outside the CT volume\n"
+                            "Dataset maximum z value is: " + repr(max(vtk.z)))
                              
 def _get_node_data(part):
     """ Identifies node data using part class """
@@ -266,20 +267,9 @@ def _limit_num_materials(moduli, gapValue, minVal, groupingDensity):
     
     if gapValue == 0:
         return moduli
+    elif gapValue == 1:
+        return np.ceil(moduli)
     else:
-        # warn user if there are a lot of bins to calculate
-        binLength = (max(moduli) - min(moduli)) / gapValue
-        if binLength > 10000:
-            print('\n    WARNING:')
-            print('    You have specified a very small gap size relative to your maximum modulus')
-            print(('    So your modulus "bin" size is: ' + repr(round(binLength))))
-            print('    This will take so long to calculate it may crash your computer ***')
-            answ = input('    Would you like to continue (y/n)')
-            if (answ == 'n') | (answ == 'N') | (answ == 'no') | (answ == 'No') | (answ == 'NO'):
-                sys.exit()
-            else:
-                print('\n')
-
 	    # calculate the modulus values
         indices, sorted_moduli = list(zip(*sorted(enumerate(moduli), key=itemgetter(1))))
         new_moduli = [minVal] * len(moduli)
