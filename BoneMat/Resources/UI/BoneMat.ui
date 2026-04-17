@@ -542,7 +542,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>p_ash = (p_ct + </string>
+            <string>p_ash (g/cm^3) = (p_ct + </string>
            </property>
           </widget>
          </item>
@@ -562,7 +562,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>E = </string>
+            <string>E (MPa) = </string>
            </property>
           </widget>
          </item>
@@ -607,7 +607,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>p_app = p_ash / </string>
+            <string>p_app (g/cm^3) = p_ash / </string>
            </property>
           </widget>
          </item>
@@ -709,7 +709,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>p_ct =</string>
+            <string>p_ct (gHA/cm^3) =</string>
            </property>
           </widget>
          </item>
