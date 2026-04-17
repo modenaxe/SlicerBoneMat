@@ -773,15 +773,9 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         return _create_part('input_mesh', cells, cellName, cellType, points)
     
     def getVtkCTData(self, volNode):
-        """
-        Writes a Slicer vtkMRMLScalarVolumeNode as a legacy VTK RECTILINEAR_GRID ASCII file
-        with explicit X_COORDINATES / Y_COORDINATES / Z_COORDINATES and POINT_DATA scalars,
-        as required by py_bonemat_abaqus.
-        Assumes the volume axes are not obliquely rotated.
-        """
         img = volNode.GetImageData()
         if img is None:
-            raise ValueError("Volume node has no image data")
+            raise Exception("Volume node has no image data")
         
         padDepth = self.getParameterNode().ctPadDepth
         if padDepth < 0:
@@ -791,6 +785,8 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
         ijkToRas = vtk.vtkMatrix4x4()
         volNode.GetIJKToRASMatrix(ijkToRas)
+
+        self.checkAxisAligned(ijkToRas)
 
         def ras_of(i, j, k):
             v = [i, j, k, 1.0]
@@ -843,6 +839,32 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         newScalars = self.reorderedPaddedScalars(img, flipX, flipY, flipZ)
 
         return vtk_data(xs, ys, zs, newScalars)
+    
+    def checkAxisAligned(self, ijkToRas) -> None:
+        direction = np.zeros((3, 3), dtype=float)
+        for r in range(3):
+            for c in range(3):
+                direction[r, c] = ijkToRas.GetElement(r, c)
+
+        # Remove spacing by normalizing each IJK axis vector.
+        for c in range(3):
+            norm = np.linalg.norm(direction[:, c])
+            if norm == 0:
+                raise Exception("CT image has an invalid IJK-to-RAS matrix")
+            direction[:, c] /= norm
+
+        absDirection = np.abs(direction)
+
+        # Axis-aligned means each IJK axis points almost entirely along one RAS axis.
+        offAxis = absDirection.copy()
+        for c in range(3):
+            offAxis[np.argmax(absDirection[:, c]), c] = 0
+
+        if np.any(offAxis > 1e-4):
+            raise Exception(
+                "Input CT is obliquely oriented. Please resample/reformat it to an "
+                "axis-aligned volume before running BoneMat."
+            )
     
     def reorderedPaddedScalars(self, img, flipX, flipY, flipZ):
         nx, ny, nz = img.GetDimensions()
