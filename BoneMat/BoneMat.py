@@ -719,6 +719,9 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
 
     def getParams(self, algorithm) -> dict:
         paraNode = self.getParameterNode()
+        if paraNode.ashDensityScale == 0 or paraNode.apparentDensityDivisor == 0:
+            raise Exception('All divisors in bone density formulation steps must be non-zero')
+        
         params = {
             'integration': algorithm,
             'gapValue': float(paraNode.gapValue),
