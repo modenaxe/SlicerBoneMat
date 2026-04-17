@@ -163,7 +163,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # setup various UI elements
         self.setupConnections()
         self.setupDropdowns()
-        self.setupPhantomTable()
+        self.setupAdvancedSection()
         self.setupProgressLog()
 
         # setting default values
@@ -284,7 +284,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.algoSelector.addItem('E integration (Bonemat v3)', 'E')
         self.ui.algoSelector.setCurrentIndex(2)
 
-    def setupPhantomTable(self) -> None:
+    def setupAdvancedSection(self) -> None:
         # Adjusting the UI of the phantom calibration table
         table = self.ui.phantomCalibrationTableWidget
         table.horizontalHeader().setSectionResizeMode(qt.QHeaderView.Stretch)
@@ -297,6 +297,20 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Phantom calibration is initially inactive
         self.ui.phantomCalibrationTableWidget.enabled = False
+
+        # Set a fixed width for all the value spin boxes
+        spinBoxes = [
+            self.ui.ctDensitySlopeSpinBox,
+            self.ui.ctDensityInterceptSpinBox,
+            self.ui.ashDensityOffsetSpinBox,
+            self.ui.ashDensityScaleSpinBox,
+            self.ui.apparentDensityDivisorSpinBox,
+            self.ui.modulusScaleSpinBox,
+            self.ui.modulusExponentSpinBox,
+        ]
+
+        for spinBox in spinBoxes:
+            spinBox.setFixedWidth(100)
 
     def setupProgressLog(self) -> None:
         self.ui.progressBar.hide()
@@ -313,29 +327,59 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             if jsonPresets is None:
                 raise Exception()
             presets = json.loads(jsonPresets)
+            if 'None' not in list(presets.keys()):
+                raise Exception()
         except:
-            # no presets initialised, or object wasn't valid json
-            # write a 'None' preset with 0s as the 7 values
-            presets = {
-                'None': {
-                    'ctDensitySlope': 0,
-                    'ctDensityIntercept': 0,
-                    'ashDensityOffset': 0,
-                    'ashDensityScale': 0,
-                    'apparentDensityDivisor': 0,
-                    'modulusScale': 0,
-                    'modulusExponent': 0
-                }
-            }
+            # no presets initialised, object wasn't valid json
+            # or 'None' preset missing (through tampering with QSettings)
+            # reset presets to starter options
+            presets = self.getDefaultPresetOptions()
             settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
 
+        print(presets)
         for name, values in presets.items():
             self.ui.presetSelector.addItem(name, values)
 
-        index = self.ui.presetSelector.findText('Femur')
+        index = self.ui.presetSelector.findText('Proximal Femur')
         if index == -1:
             index = self.ui.presetSelector.findText('None')
         self.ui.presetSelector.setCurrentIndex(index)
+
+    def getDefaultPresetOptions(self) -> dict:
+        zeros = {
+            'ctDensitySlope': 0,
+            'ctDensityIntercept': 0,
+            'ashDensityOffset': 0,
+            'ashDensityScale': 0,
+            'apparentDensityDivisor': 0,
+            'modulusScale': 0,
+            'modulusExponent': 0
+        }
+        generic = {
+            'ctDensitySlope': 0.0006,
+            'ctDensityIntercept': 0.041,
+            'ashDensityOffset': 0.09,
+            'ashDensityScale': 1.14,
+            'apparentDensityDivisor': 0.6
+        }
+
+        femoralDict = generic.copy()
+        vertebraDict = generic.copy()
+        tibiaDict = generic.copy()
+        trochanterDict = generic.copy()
+
+        femoralDict.update({'modulusScale': 6850, 'modulusExponent': 1.49})
+        vertebraDict.update({'modulusScale': 4730, 'modulusExponent': 1.56})
+        tibiaDict.update({'modulusScale': 15520, 'modulusExponent': 1.93})
+        trochanterDict.update({'modulusScale': 15010, 'modulusExponent': 2.18})
+
+        return {
+            'None': zeros,
+            'Proximal Femur': femoralDict,
+            'Proximal Tibia': tibiaDict,
+            'Vertebra (T10 - L5)': vertebraDict,
+            'Greater Trochanter': trochanterDict
+        }
 
     def setDefaultValues(self) -> None:
         # Default values for some options
