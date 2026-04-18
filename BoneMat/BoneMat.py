@@ -75,6 +75,32 @@ The idea for this module was conceived by Dr Luca Modenese (University of New So
 <p>BoneMat citation: Taddei F, Schileo E, Helgason B, Cristofolini L, Viceconti M. The material mapping strategy influences the accuracy of CT-based finite element models of bones: an evaluation against experimental measurements. Med Eng Phys. 2007 Nov;29(9):973-9</p>
 <p>py_bonemat_abaqus citation: Elise C. Pegg, Harinderjit S. Gill, An open source software tool to assign the material properties of bone for ABAQUS finite element simulations, Journal of Biomechanics, Volume 49, Issue 13, 2016, Pages 3116-3121</p>
 """)
+        
+        slicer.app.connect("startupCompleted()", registerSampleData)
+
+#
+# Register sample data sets in Sample Data module
+#
+
+def registerSampleData():
+    import SampleData
+
+    SampleData.SampleDataLogic.registerCustomSampleDataSource(
+        category="BoneMat",
+        sampleName="BoneMat Tutorial",
+        uris=[
+            "https://github.com/modenaxe/SlicerBoneMat/releases/download/SampleData/ProximalFemurCT.nrrd",
+            "https://github.com/modenaxe/SlicerBoneMat/releases/download/SampleData/ProximalFemurSegmentation.stl"
+        ],
+        fileNames=["BoneMat_tutorial_ct.nrrd", "BoneMat_tutorial_seg.stl"],
+        nodeNames=["BoneMatTutorialCT", "BoneMatTutorialSegmentation"],
+        loadFileTypes=["VolumeFile", "SegmentationFile"],
+        thumbnailFileName=os.path.join(os.path.dirname(__file__), 'Resources/Icons/BoneMatTutorial.png'),
+        checksums=[
+            "SHA256:b695d0cf4b3dad3babd084dcacdb2e89a36213d741d0604edae05fe617231b4d",
+            "SHA256:d6a37deec8ede39610acf085fb4cfa9bdae877833fa126ab1daefdcf9f175782"
+        ]
+    )
 
 #
 # BoneMatParameterNode
@@ -310,7 +336,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         ]
 
         for spinBox in spinBoxes:
-            spinBox.setFixedWidth(100)
+            spinBox.setFixedWidth(110)
 
     def setupProgressLog(self) -> None:
         self.ui.progressBar.hide()
@@ -336,7 +362,6 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             presets = self.getDefaultPresetOptions()
             settings.setValue('BoneMat/BoneDensityPresets', json.dumps(presets))
 
-        print(presets)
         for name, values in presets.items():
             self.ui.presetSelector.addItem(name, values)
 
