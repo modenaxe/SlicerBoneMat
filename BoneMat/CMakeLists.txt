@@ -8,7 +8,12 @@ set(MODULE_PYTHON_SCRIPTS
 
 set(MODULE_PYTHON_RESOURCES
   Resources/Icons/${MODULE_NAME}.png
+  Resources/Icons/${MODULE_NAME}Tutorial.png
   Resources/UI/${MODULE_NAME}.ui
+  )
+
+set(PYBONEMAT_PACKAGE_SOURCE_DIR
+  ${CMAKE_CURRENT_SOURCE_DIR}/../external/py_bonemat_abaqus/py_bonemat_abaqus
   )
 
 #-----------------------------------------------------------------------------
@@ -17,6 +22,13 @@ slicerMacroBuildScriptedModule(
   SCRIPTS ${MODULE_PYTHON_SCRIPTS}
   RESOURCES ${MODULE_PYTHON_RESOURCES}
   WITH_GENERIC_TESTS
+  )
+
+#-----------------------------------------------------------------------------
+install(
+  DIRECTORY ${PYBONEMAT_PACKAGE_SOURCE_DIR}/
+  DESTINATION ${Slicer_INSTALL_QTSCRIPTEDMODULES_LIB_DIR}/py_bonemat_abaqus
+  FILES_MATCHING PATTERN "*.py"
   )
 
 #-----------------------------------------------------------------------------

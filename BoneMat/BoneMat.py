@@ -28,8 +28,25 @@ from slicer import (
 )
         
 def configurePyBonematImports(module_file):
-    project_root = os.path.abspath(os.path.join(os.path.dirname(module_file), ".."))
-    bonemat_repo_root = os.path.join(project_root, "external/py_bonemat_abaqus")
+    module_dir = os.path.abspath(os.path.dirname(module_file))
+    project_root = os.path.abspath(os.path.join(module_dir, ".."))
+
+    candidate_roots = [
+        module_dir,
+        os.path.join(project_root, "external/py_bonemat_abaqus"),
+    ]
+
+    bonemat_repo_root = None
+    for candidate_root in candidate_roots:
+        if os.path.isdir(os.path.join(candidate_root, "py_bonemat_abaqus")):
+            bonemat_repo_root = candidate_root
+            break
+
+    if bonemat_repo_root is None:
+        raise ModuleNotFoundError(
+            "Could not find vendored py_bonemat_abaqus package. "
+            f"Checked: {candidate_roots}"
+        )
 
     if bonemat_repo_root in sys.path:
         sys.path.remove(bonemat_repo_root)
@@ -39,8 +56,9 @@ def configurePyBonematImports(module_file):
         sys.path.remove(project_root)
         sys.path.append(project_root)
 
-    if "py_bonemat_abaqus" in sys.modules:
-        del sys.modules["py_bonemat_abaqus"]
+    for module_name in list(sys.modules):
+        if module_name == "py_bonemat_abaqus" or module_name.startswith("py_bonemat_abaqus."):
+            del sys.modules[module_name]
 
     importlib.invalidate_caches()
 
@@ -1345,4 +1363,3 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         slope = (nums[1] - nums[3]) / (nums[0] - nums[2])
         intercept = nums[1] - slope * nums[0]
         return slope / 1000, intercept / 1000
-
