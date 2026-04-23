@@ -25,6 +25,24 @@ slicerMacroBuildScriptedModule(
   )
 
 #-----------------------------------------------------------------------------
+set(PYBONEMAT_PACKAGE_BUILD_DIR
+  ${CMAKE_BINARY_DIR}/${Slicer_QTSCRIPTEDMODULES_LIB_DIR}/py_bonemat_abaqus
+  )
+
+file(COPY
+  ${PYBONEMAT_PACKAGE_SOURCE_DIR}/
+  DESTINATION ${PYBONEMAT_PACKAGE_BUILD_DIR}
+  FILES_MATCHING PATTERN "*.py"
+  )
+
+add_custom_target(${MODULE_NAME}PyBonematPackage ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${PYBONEMAT_PACKAGE_SOURCE_DIR}
+    ${PYBONEMAT_PACKAGE_BUILD_DIR}
+  COMMENT "Copying py_bonemat_abaqus package for ${MODULE_NAME}"
+  )
+
+#-----------------------------------------------------------------------------
 install(
   DIRECTORY ${PYBONEMAT_PACKAGE_SOURCE_DIR}/
   DESTINATION ${Slicer_INSTALL_QTSCRIPTEDMODULES_LIB_DIR}/py_bonemat_abaqus
