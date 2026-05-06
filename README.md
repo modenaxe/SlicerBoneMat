@@ -1,3 +1,4 @@
+![visitors](https://visitor-badge.laobi.icu/badge?page_id=modenaxe.slicerbonemat)
 # SlicerBoneMat
 
 This is a 3D Slicer extension for assigning material properties (specifically Young's Modulus) to volumetric meshes using CT voxel intensities.
