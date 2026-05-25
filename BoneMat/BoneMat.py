@@ -32,7 +32,7 @@ def configurePyBonematImports(module_file):
     project_root = os.path.abspath(os.path.join(module_dir, ".."))
 
     candidate_roots = [
-        module_dir,
+        module_dir, # it's this one for installations
         os.path.join(project_root, "external/py_bonemat_abaqus"),
     ]
 
@@ -126,15 +126,6 @@ def registerSampleData():
 
 @parameterNodeWrapper
 class BoneMatParameterNode:
-    """
-    The parameters needed by module.
-
-    inputVolume - The volume to threshold.
-    imageThreshold - The value at which to threshold the input volume.
-    invertThreshold - If true, will invert the threshold.
-    thresholdedVolume - The output volume that will contain the thresholded volume.
-    invertedVolume - The output volume that will contain the inverted thresholded volume.
-    """
 
     inputCT: vtkMRMLScalarVolumeNode
     inputVolMesh: vtkMRMLModelNode
@@ -662,6 +653,7 @@ class BoneMatWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
             self.appendLog(f'Material assignment complete.\nElapsed time (seconds): {time.time() - start}')
         except Exception as e:
+            self.ui.progressBar.hide()
             self.appendLog(f"ERROR: {e}")
 
     def onDownloadButton(self) -> None:
@@ -751,7 +743,7 @@ class BoneMatLogic(ScriptedLoadableModuleLogic):
         ScriptedLoadableModuleLogic.__init__(self)
 
     def getParameterNode(self):
-        return BoneMatParameterNode(super().getParameterNode())      
+        return BoneMatParameterNode(super().getParameterNode())
 
     def process(self, inputCT, inputMesh, outputMesh, algorithm, progressBar):
         """

@@ -8,7 +8,7 @@ It's designed to be a modern, open-source equivalent of the original BoneMat sof
 
 ## Usage
 
-Here is a brief description of how to use the various sections of the module's UI:
+A full extended tutorial is available in the `tutorial/README.md` file. Regardless, here is a brief description of how to use the various sections of the module's UI:
 * Input/output models
   * Select the input CT volume (likely a DICOM series)
   * Select the input volumetric mesh (can be created from a surface model using the SegmentMesher extension)
@@ -51,3 +51,6 @@ Here is a brief description of how to use the various sections of the module's U
 
 This project is released under the GNU General Public License v3 (GPLv3). While Slicer typically prefers more permissive licenses, this module incorporates and builds upon <a href="https://github.com/elisepegg/py_bonemat_abaqus">py_bonemat_abaqus</a>, developed by Dr Elise Pegg (University of Bath), which is licensed under GPLv3, and therefore this project adopts the same license to remain compliant.
 
+# Sample data
+
+The tutorial CT images were obtained from the MITK-GEM website, available <a href="https://github.com/araex/mitk-gem-site/tree/gh-pages/tutorial_files">here</a>. The segmentation was performed manually by the authors using MITK-GEM.
